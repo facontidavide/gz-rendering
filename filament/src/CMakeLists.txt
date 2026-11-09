@@ -25,6 +25,10 @@ foreach(mat ${filament_mat_sources})
     COMMENT "Compiling filament material ${mat_name}")
   list(APPEND filament_materials ${mat_out})
 endforeach()
+# ogre2's skybox cube map, for Scene::SetSkyEnabled
+configure_file(
+  "${PROJECT_SOURCE_DIR}/ogre2/src/media/materials/textures/skybox.dds"
+  "${filament_media_dir}/textures/skybox.dds" COPYONLY)
 add_custom_target(filament_materials DEPENDS ${filament_materials})
 add_dependencies(${filament_target} filament_materials)
 
