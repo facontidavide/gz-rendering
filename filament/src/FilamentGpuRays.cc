@@ -30,6 +30,8 @@
 
 #include <gz/common/Console.hh>
 #include <gz/math/Helpers.hh>
+#include <gz/math/Quaternion.hh>
+#include <gz/math/Vector3.hh>
 
 #include "gz/rendering/Image.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
@@ -65,10 +67,6 @@ namespace
         filament::math::float4{-_f.fwd, 0.0f},
         filament::math::float4{0.0f, 0.0f, 0.0f, 1.0f});
   }
-
-  // Same near/far widening as the depth camera, see FilamentDepthCamera.cc
-  constexpr double kNearScale = 0.1;
-  constexpr double kFarScale = 1.1;
 }
 
 //////////////////////////////////////////////////
@@ -161,56 +159,67 @@ void FilamentGpuRays::UpdateRays()
     return;
   this->rayKey = key;
 
-  // Texel density: about two texels per ray step in the denser direction
+  // Face resolution: same rule as ogre2 (rays per 90 degrees, next power
+  // of two, clamped to [128, 1024]) so both engines sample the same texels
+  const double hFov = std::max(hMax - hMin, 1e-6);
+  const double vFov = vCount > 1 ? std::max(vMax - vMin, 1e-6) : 0.0;
+  const unsigned int hs = hFov < GZ_PI_2 ? hCount :
+      static_cast<unsigned int>(GZ_PI_2 / hFov * hCount);
+  const unsigned int vs = vFov < GZ_PI_2 ? vCount :
+      static_cast<unsigned int>(GZ_PI_2 / vFov * vCount);
+  unsigned int pot = 1u;
+  while (pot < std::max(hs, vs))
+    pot <<= 1;
+  this->faceRes = std::clamp(pot, 128u, 1024u);
+  const unsigned int n = this->faceRes;
   const double hStep = hCount > 1 ? (hMax - hMin) / (hCount - 1) : 0.0;
   const double vStep = vCount > 1 ? (vMax - vMin) / (vCount - 1) : 0.0;
-  double minStep = GZ_PI_2 / 256.0;
-  if (hStep > 1e-6)
-    minStep = std::min(minStep, hStep);
-  if (vStep > 1e-6)
-    minStep = std::min(minStep, vStep);
-  // ponytail: nearest-texel sampling, so range error grows toward the face
-  // edges; raise the 2x oversampling if a test needs tighter ranges.
-  this->faceRes = static_cast<unsigned int>(std::clamp(
-      std::ceil(2.0 * GZ_PI_2 / minStep), 64.0, 2048.0));
-  const unsigned int n = this->faceRes;
 
   this->rays.resize(static_cast<size_t>(hCount) * vCount);
   this->faceUsed.fill(false);
+  // Directions, face choice and tie-breaks replicate ogre2 (double math,
+  // accumulated angle steps) so rays on face edges pick the same face.
+  double v = vMin;
   for (unsigned int j = 0; j < vCount; ++j)
   {
-    const double v = vMin + j * vStep;
+    const math::Quaterniond pitch(math::Vector3d(1, 0, 0), -v);
+    double h = hMin;
     for (unsigned int i = 0; i < hCount; ++i)
     {
-      const double h = hMin + i * hStep;
-      const float3 d{static_cast<float>(std::cos(v) * std::cos(h)),
-                     static_cast<float>(std::cos(v) * std::sin(h)),
-                     static_cast<float>(std::sin(v))};
-      // the face is the axis with the largest component
-      int face = 0;
-      float best = -1.0f;
-      for (int f = 0; f < 6; ++f)
-      {
-        const float c = dot(d, kFaces[f].fwd);
-        if (c > best)
-        {
-          best = c;
-          face = f;
-        }
-      }
+      // ogre2 Y-up cubemap frame (x, y, z) is (-Y, Z, X) of the sensor
+      const math::Vector3d o = math::Quaterniond(math::Vector3d(0, 1, 0), -h)
+          * pitch * math::Vector3d(0, 0, 1);
+      const math::Vector3d d(o.Z(), -o.X(), o.Y());
+      const math::Vector3d da = d.Abs();
+      int face;
+      if (da.X() >= da.Y() && da.X() >= da.Z())
+        face = d.X() < 0.0 ? 1 : 0;
+      else if (da.Z() >= da.Y())
+        face = d.Z() < 0.0 ? 5 : 4;
+      else
+        face = d.Y() < 0.0 ? 3 : 2;
       const Face &fc = kFaces[face];
       const float3 r = cross(fc.fwd, fc.up);
-      const float a = dot(d, r) / best;      // [-1, 1] across the face
-      const float b = dot(d, fc.up) / best;  // [-1, 1] bottom to top
-      const unsigned int px = std::min(n - 1, static_cast<unsigned int>(
-          std::max(0.0f, (a * 0.5f + 0.5f) * n)));
-      // image rows are stored top row first
-      const unsigned int py = std::min(n - 1, static_cast<unsigned int>(
-          std::max(0.0f, (0.5f - b * 0.5f) * n)));
+      const math::Vector3d fwd(fc.fwd.x, fc.fwd.y, fc.fwd.z);
+      const double best = d.Dot(fwd);
+      // texel coordinates in [0, 1], rows stored top row first
+      const float u = static_cast<float>(
+          d.Dot(math::Vector3d(r.x, r.y, r.z)) / best * 0.5 + 0.5);
+      const float w = static_cast<float>(
+          0.5 - d.Dot(math::Vector3d(fc.up.x, fc.up.y, fc.up.z)) / best * 0.5);
+      const unsigned int px = std::min(n - 1,
+          static_cast<unsigned int>(std::max(0.0f, u * n)));
+      const unsigned int py = std::min(n - 1,
+          static_cast<unsigned int>(std::max(0.0f, w * n)));
+      // like ogre2, the range is the one of the texel center direction
+      const float ac = (px + 0.5f) / n * 2.0f - 1.0f;
+      const float bc = 1.0f - (py + 0.5f) / n * 2.0f;
       this->rays[static_cast<size_t>(j) * hCount + i] =
-          {face, py * n + px, 1.0f / best};
+          {face, py * n + px, std::sqrt(ac * ac + bc * bc + 1.0f)};
       this->faceUsed[face] = true;
+      h += hStep;
     }
+    v += vStep;
   }
 }
 
@@ -222,8 +231,11 @@ void FilamentGpuRays::Render()
   this->UpdateRays();
   const unsigned int n = this->faceRes;
 
+  // near: half the side of the cube inscribed in the near sphere (ogre2
+  // does the same), so no ray closer than near gets clipped by a corner;
+  // ranges are then clamped against near/far in PostRender
   this->camera->setProjection(90.0, 1.0,
-      this->NearClipPlane() * kNearScale, this->FarClipPlane() * kFarScale,
+      this->NearClipPlane() / std::sqrt(3.0), this->FarClipPlane(),
       filament::Camera::Fov::HORIZONTAL);
   this->view->setVisibleLayers(0xff,
       FilamentConversions::ToLayers(this->VisibilityMask()));

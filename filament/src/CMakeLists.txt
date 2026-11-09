@@ -71,3 +71,10 @@ target_link_libraries(filament_smoke
     gz-plugin::loader
     gz-common::gz-common
     gz-common::graphics)
+
+# Sensor parity dump: raw depth/point cloud/lidar outputs + timings per engine
+add_executable(filament_parity ${CMAKE_CURRENT_SOURCE_DIR}/../tools/filament_parity.cc)
+target_link_libraries(filament_parity
+  PRIVATE
+    ${PROJECT_LIBRARY_TARGET_NAME}
+    gz-common::gz-common)

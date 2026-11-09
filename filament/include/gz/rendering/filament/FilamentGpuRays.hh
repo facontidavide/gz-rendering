@@ -76,8 +76,8 @@ namespace gz
       /// scan configuration changed
       private: void UpdateRays();
 
-      /// \brief Per ray: cube face, texel index, 1 / cos(angle to the face
-      /// axis) to turn forward depth into range
+      /// \brief Per ray: cube face, texel index, 1 / cos(angle between the
+      /// texel center direction and the face axis): depth to range
       private: struct Ray { int face; unsigned int texel; float invCos; };
 
       private: std::vector<Ray> rays;
