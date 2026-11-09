@@ -24,6 +24,8 @@
 // engineParam is set to "1", e.g. "opengl" for filament
 // PARITY_WIDEANGLE=1: only the wide-angle camera geometry checks (RGB images,
 // per-object centroids, cutoff circle radius, Project3d), see WideAngle()
+// PARITY_PARTICLES=1: only particle statistics, with a particle emitter in
+// front of the depth cameras, lidars and thermal cameras, see Particles()
 
 #include <algorithm>
 #include <chrono>
@@ -59,6 +61,7 @@
 #include <gz/rendering/SegmentationCamera.hh>
 #include <gz/rendering/ThermalCamera.hh>
 #include <gz/rendering/Material.hh>
+#include <gz/rendering/ParticleEmitter.hh>
 #include <gz/rendering/Visual.hh>
 #include <gz/rendering/WideAngleCamera.hh>
 
@@ -400,6 +403,179 @@ namespace
     unsigned int hCount, vCount;
     double hMin, hMax, vMin, vMax, nearClip, farClip; bool clamp;
   };
+
+  /// \brief Particle statistics. A box emitter rises in front of the
+  /// sensors; after 3 s of warm-up, each depth camera, lidar and thermal
+  /// camera renders one frame with the emitter hidden (baseline), then
+  /// kFrames frames 16 ms apart with it. A pixel / ray is affected when
+  /// its finite / inf class or its value (by more than 1 cm, or 1 count
+  /// for thermal) differs from the baseline. particles.txt gets, per
+  /// sensor: affected fraction, mean and std of the finite affected values,
+  /// mean of the baseline where both are finite. rgb_particles.png is for
+  /// eyeballing.
+  void Particles(ScenePtr _scene, const std::string &_dir,
+      const std::vector<DepthCfg> &_depthCfgs,
+      const std::vector<RaysCfg> &_raysCfgs)
+  {
+    constexpr int kFrames = 30;
+    ParticleEmitterPtr emitter = _scene->CreateParticleEmitter();
+    emitter->SetType(EM_BOX);
+    // ogre2 axes: width (X) along the emitter's Y, height (Y) along its Z,
+    // depth (Z) along its X, the emission direction; pitched so that the
+    // particles rise
+    emitter->SetEmitterSize({0.6, 1.2, 0.4});
+    emitter->SetLocalPose({1.2, 0, 0.3, 0, -1.57, 0});
+    emitter->SetParticleSize({0.15, 0.15, 0.15});
+    emitter->SetRate(80);
+    emitter->SetLifetime(3);
+    emitter->SetVelocityRange(0.2, 0.5);
+    emitter->SetScaleRate(0.1);
+    emitter->SetEmitting(true);
+    _scene->RootVisual()->AddChild(emitter);
+
+    auto step = [&] {
+      _scene->SetTime(_scene->Time() + std::chrono::milliseconds(16)); };
+    CameraPtr cam = _scene->CreateCamera("rgb_particles");
+    cam->SetLocalPose({-1, -2.5, 1.2, 0, 0.1, 0.85});
+    cam->SetImageWidth(640);
+    cam->SetImageHeight(480);
+    cam->SetAspectRatio(640.0 / 480.0);
+    cam->SetHFOV(GZ_PI / 3);
+    _scene->RootVisual()->AddChild(cam);
+    Image img = cam->CreateImage();
+    for (int i = 0; i < 190; ++i)
+    {
+      step();
+      cam->Update();
+    }
+    cam->Capture(img);
+    common::Image png;
+    png.SetFromData(img.Data<unsigned char>(), 640, 480,
+        common::Image::RGB_INT8);
+    png.SavePNG(_dir + "/rgb_particles.png");
+
+    std::ofstream out(_dir + "/particles.txt");
+    // _update renders one frame into _data
+    auto stats = [&](const std::string &_name, size_t _n, double _tol,
+        const std::function<void(std::vector<float> &)> &_update)
+    {
+      std::vector<float> base(_n), cur(_n);
+      emitter->SetVisible(false);
+      _update(base);
+      emitter->SetVisible(true);
+      double affected = 0, n = 0, sum = 0, sum2 = 0, nBase = 0, sumBase = 0;
+      for (int f = 0; f < kFrames; ++f)
+      {
+        step();
+        _update(cur);
+        for (size_t i = 0; i < _n; ++i)
+        {
+          const bool fa = std::isfinite(base[i]);
+          const bool fb = std::isfinite(cur[i]);
+          if (fa == fb && (!fa || std::abs(cur[i] - base[i]) <= _tol))
+            continue;
+          affected += 1;
+          if (fb)
+          {
+            n += 1;
+            sum += cur[i];
+            sum2 += cur[i] * cur[i];
+          }
+          if (fa && fb)
+          {
+            nBase += 1;
+            sumBase += base[i];
+          }
+        }
+      }
+      const double mean = n > 0 ? sum / n : 0.0;
+      out << _name << " " << affected / (_n * kFrames) << " " << mean << " "
+          << (n > 0 ? std::sqrt(std::max(0.0, sum2 / n - mean * mean)) : 0.0)
+          << " " << (nBase > 0 ? sumBase / nBase : 0.0) << "\n";
+    };
+
+    for (const auto &c : _depthCfgs)
+    {
+      DepthCameraPtr dc = _scene->CreateDepthCamera(c.name);
+      dc->SetLocalPose(c.pose);
+      dc->SetImageWidth(c.w);
+      dc->SetImageHeight(c.h);
+      dc->SetAspectRatio(static_cast<double>(c.w) / c.h);
+      dc->SetHFOV(c.hfov);
+      dc->SetNearClipPlane(c.nearClip);
+      dc->SetFarClipPlane(c.farClip);
+      dc->CreateDepthTexture();
+      _scene->RootVisual()->AddChild(dc);
+      std::vector<float> *target = nullptr;
+      auto conn = dc->ConnectNewDepthFrame(
+          [&](const float *_d, unsigned int, unsigned int, unsigned int,
+              const std::string &) {
+            std::memcpy(target->data(), _d, target->size() * sizeof(float));
+          });
+      stats(c.name + "_depth", c.w * c.h, 0.01, [&](std::vector<float> &_v)
+          { target = &_v; dc->Update(); });
+      conn.reset();
+    }
+
+    for (const auto &c : _raysCfgs)
+    {
+      GpuRaysPtr rays = _scene->CreateGpuRays(c.name);
+      rays->SetLocalPose(c.pose);
+      rays->SetNearClipPlane(c.nearClip);
+      rays->SetFarClipPlane(c.farClip);
+      rays->SetClamp(c.clamp);
+      rays->SetAngleMin(c.hMin);
+      rays->SetAngleMax(c.hMax);
+      rays->SetRayCount(c.hCount);
+      rays->SetVerticalRayCount(c.vCount);
+      if (c.vCount > 1)
+      {
+        rays->SetVerticalAngleMin(c.vMin);
+        rays->SetVerticalAngleMax(c.vMax);
+      }
+      _scene->RootVisual()->AddChild(rays);
+      const unsigned int ch = rays->Channels();
+      std::vector<float> *target = nullptr;
+      auto conn = rays->ConnectNewGpuRaysFrame(
+          [&](const float *_d, unsigned int, unsigned int, unsigned int,
+              const std::string &) {
+            for (size_t i = 0; i < target->size(); ++i)
+              (*target)[i] = _d[i * ch];
+          });
+      stats(c.name, c.hCount * c.vCount, 0.01, [&](std::vector<float> &_v)
+          { target = &_v; rays->Update(); });
+      conn.reset();
+    }
+
+    for (PixelFormat fmt : {PF_L16, PF_L8})
+    {
+      const std::string name = fmt == PF_L16 ? "thermal16" : "thermal8";
+      ThermalCameraPtr th = _scene->CreateThermalCamera(name);
+      th->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+      th->SetImageWidth(320);
+      th->SetImageHeight(240);
+      th->SetAspectRatio(320.0 / 240.0);
+      th->SetHFOV(GZ_PI / 2);
+      th->SetNearClipPlane(0.5);
+      th->SetFarClipPlane(10);
+      th->SetImageFormat(fmt);
+      th->SetAmbientTemperature(296.0f);
+      th->SetAmbientTemperatureRange(4.0f);
+      th->SetHeatSourceTemperatureRange(2.0f);
+      th->SetLinearResolution(fmt == PF_L16 ? 0.01f : 3.0f);
+      th->SetMinTemperature(250.0f);
+      th->SetMaxTemperature(fmt == PF_L16 ? 400.0f : 600.0f);
+      _scene->RootVisual()->AddChild(th);
+      std::vector<float> *target = nullptr;
+      auto conn = th->ConnectNewThermalFrame(
+          [&](const uint16_t *_d, unsigned int, unsigned int, unsigned int,
+              const std::string &) {
+            std::copy(_d, _d + target->size(), target->begin()); });
+      stats(name, 320 * 240, 0.5, [&](std::vector<float> &_v)
+          { target = &_v; th->Update(); });
+      conn.reset();
+    }
+  }
 }
 
 int main(int _argc, char **_argv)
@@ -457,6 +633,26 @@ int main(int _argc, char **_argv)
     {"depthB", {-1, 2, 0.5, 0, 0.1, -0.6}, 640, 480, GZ_PI / 3, 0.5, 6},
     {"depthC", {0, 0, 0.9, 0.2, 0.3, 0.4}, 256, 256, 1.2, 0.3, 4},
   };
+  const std::vector<RaysCfg> raysCfgs = {
+    {"lidar2d", {0, 0, 0.5, 0, 0, 0}, 720, 1,
+        -GZ_PI, GZ_PI, 0, 0, 0.1, 12, false},
+    {"vlp16", {0, 0, 1.0, 0, 0, 0}, 1800, 16,
+        -GZ_PI, GZ_PI, -0.2618, 0.2618, 0.3, 10, false},
+    {"vlp16clamp", {0, 0, 1.0, 0, 0, 0}, 1800, 16,
+        -GZ_PI, GZ_PI, -0.2618, 0.2618, 0.3, 10, true},
+    {"tilted", {0.5, -0.5, 1.2, 0.3, 0.2, 0.5}, 128, 64,
+        -GZ_PI / 4, GZ_PI / 4, -0.5236, 0.1745, 0.2, 8, false},
+    {"os1_64", {0, 0, 1.2, 0, 0, 0}, 1024, 64,
+        -GZ_PI, GZ_PI, -0.3927, 0.3927, 0.3, 20, false},
+  };
+
+  if (std::getenv("PARITY_PARTICLES"))
+  {
+    Particles(scene, dir, depthCfgs, raysCfgs);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
+
   for (const auto &c : depthCfgs)
   {
     DepthCameraPtr cam = scene->CreateDepthCamera(c.name);
@@ -595,18 +791,6 @@ int main(int _argc, char **_argv)
     conn.reset();
   }
 
-  const std::vector<RaysCfg> raysCfgs = {
-    {"lidar2d", {0, 0, 0.5, 0, 0, 0}, 720, 1,
-        -GZ_PI, GZ_PI, 0, 0, 0.1, 12, false},
-    {"vlp16", {0, 0, 1.0, 0, 0, 0}, 1800, 16,
-        -GZ_PI, GZ_PI, -0.2618, 0.2618, 0.3, 10, false},
-    {"vlp16clamp", {0, 0, 1.0, 0, 0, 0}, 1800, 16,
-        -GZ_PI, GZ_PI, -0.2618, 0.2618, 0.3, 10, true},
-    {"tilted", {0.5, -0.5, 1.2, 0.3, 0.2, 0.5}, 128, 64,
-        -GZ_PI / 4, GZ_PI / 4, -0.5236, 0.1745, 0.2, 8, false},
-    {"os1_64", {0, 0, 1.2, 0, 0, 0}, 1024, 64,
-        -GZ_PI, GZ_PI, -0.3927, 0.3927, 0.3, 20, false},
-  };
   for (const auto &c : raysCfgs)
   {
     GpuRaysPtr rays = scene->CreateGpuRays(c.name);
