@@ -51,6 +51,24 @@ FilamentScene::~FilamentScene()
 }
 
 //////////////////////////////////////////////////
+void FilamentScene::Destroy()
+{
+  // meshes detached from every visual but still referenced by the user
+  // keep their renderables (and thus material instances) alive; ogre2 drops
+  // them with its scene manager, do the same. Attached ones go with their
+  // visual in Clear(). (copy: Destroy unregisters)
+  const std::set<FilamentMesh *> leftover = this->meshes;
+  for (FilamentMesh *mesh : leftover)
+  {
+    if (mesh->HasParent())
+      continue;
+    auto keepAlive = mesh->shared_from_this();
+    mesh->Destroy();
+  }
+  BaseScene::Destroy();
+}
+
+//////////////////////////////////////////////////
 void FilamentScene::Fini()
 {
   auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();

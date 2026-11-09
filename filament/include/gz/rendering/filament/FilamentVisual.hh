@@ -40,6 +40,15 @@ namespace gz
 
       public: virtual void SetVisibilityFlags(uint32_t _flags) override;
 
+      public: virtual math::AxisAlignedBox LocalBoundingBox() const override;
+
+      public: virtual math::AxisAlignedBox BoundingBox() const override;
+
+      /// \brief Merge the boxes of this visual's geometries and its
+      /// descendants', in the frame of _pose (ogre2's BoundsHelper)
+      private: void BoundsHelper(math::AxisAlignedBox &_box, bool _local,
+          const math::Pose3d &_pose) const;
+
       protected: virtual GeometryStorePtr Geometries() const override;
 
       protected: virtual bool AttachGeometry(GeometryPtr _geometry) override;

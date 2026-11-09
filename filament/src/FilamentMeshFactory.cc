@@ -324,11 +324,16 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
         prims[i].sub->indexBuffer);
   }
   builder.build(*engine, _mesh->entity);
+  // BaseMesh::Clone recreates the mesh from it
+  _mesh->meshDescriptor = _desc;
 
   for (auto &p : prims)
   {
     _mesh->AddSubMesh(p.sub);
+    // created for this submesh only: owned (destroyed when replaced), like
+    // the clone ogre2's SetMaterial(mat) makes
     p.sub->SetMaterial(p.material, false);
+    p.sub->ownsMaterial = true;
   }
   return true;
 }

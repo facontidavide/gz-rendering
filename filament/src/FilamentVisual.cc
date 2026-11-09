@@ -15,7 +15,9 @@
  *
  */
 
+#include <filament/Box.h>
 #include <filament/Engine.h>
+#include <filament/RenderableManager.h>
 #include <filament/Scene.h>
 #include <filament/TransformManager.h>
 
@@ -26,6 +28,7 @@
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
 #include "gz/rendering/filament/FilamentVisual.hh"
+#include "gz/rendering/Utils.hh"
 
 using namespace gz;
 using namespace rendering;
@@ -141,4 +144,63 @@ void FilamentVisual::Init()
 FilamentVisualPtr FilamentVisual::SharedThis()
 {
   return std::dynamic_pointer_cast<FilamentVisual>(this->shared_from_this());
+}
+
+//////////////////////////////////////////////////
+math::AxisAlignedBox FilamentVisual::LocalBoundingBox() const
+{
+  math::AxisAlignedBox box;
+  this->BoundsHelper(box, true, this->WorldPose());
+  return box;
+}
+
+//////////////////////////////////////////////////
+math::AxisAlignedBox FilamentVisual::BoundingBox() const
+{
+  math::AxisAlignedBox box;
+  this->BoundsHelper(box, false, this->WorldPose());
+  return box;
+}
+
+//////////////////////////////////////////////////
+void FilamentVisual::BoundsHelper(math::AxisAlignedBox &_box, bool _local,
+    const math::Pose3d &_pose) const
+{
+  // ponytail: lights get no box (ogre2 gives attached lights a unit box)
+  auto &rm = FilamentRenderEngine::Instance()->FilamentEngine()
+      ->getRenderableManager();
+  if (this->visible && this->VisibilityFlags() != GZ_VISIBILITY_GUI)
+  {
+    const math::Vector3d scale = this->WorldScale();
+    math::Pose3d transform = _pose;
+    if (_local)
+    {
+      // this visual's pose relative to _pose (the queried visual)
+      const math::Pose3d world = this->WorldPose();
+      const math::Quaterniond rotInv = _pose.Rot().Inverse();
+      transform = math::Pose3d(rotInv * (world.Pos() - _pose.Pos()),
+          rotInv * world.Rot());
+    }
+    for (auto it = this->geometries->Begin(); it != this->geometries->End();
+        ++it)
+    {
+      const ::utils::Entity e = (*it)->Entity();
+      if (e.isNull() || !rm.hasComponent(e))
+        continue;
+      const filament::Box bb = rm.getAxisAlignedBoundingBox(
+          rm.getInstance(e));
+      const filament::math::float3 lo = bb.getMin();
+      const filament::math::float3 hi = bb.getMax();
+      math::AxisAlignedBox box(scale * math::Vector3d(lo.x, lo.y, lo.z),
+          scale * math::Vector3d(hi.x, hi.y, hi.z));
+      _box.Merge(transformAxisAlignedBox(box, transform));
+    }
+  }
+  for (unsigned int i = 0; i < this->ChildCount(); ++i)
+  {
+    auto child = std::dynamic_pointer_cast<FilamentVisual>(
+        this->ChildByIndex(i));
+    if (child)
+      child->BoundsHelper(_box, _local, _pose);
+  }
 }

@@ -67,6 +67,12 @@ namespace gz
       /// \brief Undo OverrideMaterial
       public: void RestoreMaterials();
 
+      /// \brief Rebind the submeshes bound to _old to _new: the material
+      /// owning _old is destroyed while still in use (ogre2 falls back to
+      /// its default datablock the same way)
+      public: void ReplaceInstance(filament::MaterialInstance *_old,
+          filament::MaterialInstance *_new);
+
       /// \brief Register a submesh built by the mesh factory
       public: void AddSubMesh(FilamentSubMeshPtr _subMesh);
 

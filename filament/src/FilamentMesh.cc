@@ -50,6 +50,10 @@ FilamentMesh::FilamentMesh()
 //////////////////////////////////////////////////
 FilamentMesh::~FilamentMesh()
 {
+  // freed without Destroy(): never leave a dangling pointer in the scene
+  // registry that sensors iterate every frame
+  if (this->scene)
+    this->scene->UnregisterMesh(this);
 }
 
 //////////////////////////////////////////////////
@@ -131,6 +135,17 @@ void FilamentMesh::AddSubMesh(FilamentSubMeshPtr _subMesh)
   _subMesh->Load();
   _subMesh->Init();
   this->subMeshes->Add(_subMesh);
+}
+
+//////////////////////////////////////////////////
+void FilamentMesh::ReplaceInstance(filament::MaterialInstance *_old,
+    filament::MaterialInstance *_new)
+{
+  for (auto it = this->subMeshes->Begin(); it != this->subMeshes->End(); ++it)
+  {
+    if ((*it)->bound == _old)
+      (*it)->ApplyInstance(_new);
+  }
 }
 
 //////////////////////////////////////////////////

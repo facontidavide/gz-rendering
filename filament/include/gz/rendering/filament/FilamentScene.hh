@@ -46,6 +46,8 @@ namespace gz
 
       public: virtual void Fini() override;
 
+      public: virtual void Destroy() override;
+
       public: virtual RenderEngine *Engine() const override;
 
       public: virtual VisualPtr RootVisual() const override;

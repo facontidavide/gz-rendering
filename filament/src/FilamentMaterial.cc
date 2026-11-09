@@ -30,6 +30,8 @@
 #include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
+#include "gz/rendering/filament/FilamentScene.hh"
+#include "gz/rendering/filament/FilamentMesh.hh"
 
 using namespace gz;
 using namespace rendering;
@@ -49,6 +51,22 @@ void FilamentMaterial::Destroy()
 {
   BaseMaterial::Destroy();
   auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+  // filament refuses to destroy an instance a renderable still uses
+  // ponytail: scans every mesh of the scene, a per-material user list if
+  // destroying materials of big scenes ever shows up in profiles
+  filament::Material *fallback =
+      FilamentRenderEngine::Instance()->Material("gz_unlit");
+  if (engine && fallback && this->scene)
+  {
+    for (FilamentMesh *mesh : this->scene->Meshes())
+    {
+      for (auto *mi : {this->lit, this->unlit})
+      {
+        if (mi)
+          mesh->ReplaceInstance(mi, fallback->getDefaultInstance());
+      }
+    }
+  }
   if (engine)
   {
     if (this->lit)
