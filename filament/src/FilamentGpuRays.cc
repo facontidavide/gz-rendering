@@ -49,6 +49,7 @@
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
+#include "FilamentCubeFaces.hh"
 
 using namespace gz;
 using namespace rendering;
@@ -56,26 +57,9 @@ using namespace rendering;
 namespace
 {
   using filament::math::float3;
-
-  /// \brief Cube face axes in the sensor frame (X forward, Y left, Z up):
-  /// forward and up. Right is forward x up.
-  struct Face { float3 fwd; float3 up; };
-  const std::array<Face, 6> kFaces = {{
-    {{1, 0, 0}, {0, 0, 1}}, {{-1, 0, 0}, {0, 0, 1}},
-    {{0, 1, 0}, {0, 0, 1}}, {{0, -1, 0}, {0, 0, 1}},
-    {{0, 0, 1}, {-1, 0, 0}}, {{0, 0, -1}, {1, 0, 0}}}};
-
-  /// \brief Filament camera transform for a face: camera looks down -Z with
-  /// Y up, so its basis columns are (right, up, -forward).
-  filament::math::mat4f FaceTransform(const Face &_f)
-  {
-    const float3 r = cross(_f.fwd, _f.up);
-    return filament::math::mat4f(
-        filament::math::float4{r, 0.0f},
-        filament::math::float4{_f.up, 0.0f},
-        filament::math::float4{-_f.fwd, 0.0f},
-        filament::math::float4{0.0f, 0.0f, 0.0f, 1.0f});
-  }
+  using filament_cube::Face;
+  using filament_cube::FaceTransform;
+  using filament_cube::kFaces;
 }
 
 //////////////////////////////////////////////////

@@ -51,6 +51,7 @@ namespace gz
     class FilamentSpotLight;
     class FilamentSubMesh;
     class FilamentVisual;
+    class FilamentWideAngleCamera;
 
     typedef BaseGeometryStore<FilamentGeometry>    FilamentGeometryStore;
     typedef BaseLightStore<FilamentLight>          FilamentLightStore;
@@ -82,6 +83,7 @@ namespace gz
     typedef shared_ptr<FilamentSpotLight>          FilamentSpotLightPtr;
     typedef shared_ptr<FilamentSubMesh>            FilamentSubMeshPtr;
     typedef shared_ptr<FilamentVisual>             FilamentVisualPtr;
+    typedef shared_ptr<FilamentWideAngleCamera>    FilamentWideAngleCameraPtr;
 
     typedef shared_ptr<FilamentGeometryStore>      FilamentGeometryStorePtr;
     typedef shared_ptr<FilamentLightStore>         FilamentLightStorePtr;

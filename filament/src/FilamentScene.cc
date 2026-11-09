@@ -27,6 +27,7 @@
 #include "gz/rendering/filament/FilamentGpuRays.hh"
 #include "gz/rendering/filament/FilamentSegmentationCamera.hh"
 #include "gz/rendering/filament/FilamentThermalCamera.hh"
+#include "gz/rendering/filament/FilamentWideAngleCamera.hh"
 #include "gz/rendering/filament/FilamentLight.hh"
 #include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
@@ -223,6 +224,15 @@ GpuRaysPtr FilamentScene::CreateGpuRaysImpl(unsigned int _id,
   FilamentGpuRaysPtr rays(new FilamentGpuRays);
   bool result = this->InitObject(rays, _id, _name);
   return (result) ? rays : nullptr;
+}
+
+//////////////////////////////////////////////////
+WideAngleCameraPtr FilamentScene::CreateWideAngleCameraImpl(
+    unsigned int _id, const std::string &_name)
+{
+  FilamentWideAngleCameraPtr camera(new FilamentWideAngleCamera);
+  bool result = this->InitObject(camera, _id, _name);
+  return (result) ? camera : nullptr;
 }
 
 //////////////////////////////////////////////////
