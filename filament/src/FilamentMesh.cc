@@ -195,6 +195,7 @@ void FilamentSubMesh::Destroy()
 void FilamentMesh::PreRender()
 {
   BaseMesh::PreRender();
+  this->UpdateBones();
   // filament casts shadows per renderable, gz per material: cast if any
   // submesh material does
   bool cast = false;

@@ -16,7 +16,13 @@ cloud XYZ, lidar) 5 mm and identical +inf/-inf/nan classes, segmentation
 the same partition, thermal L8 1 level and L16 p99 10 / max 100 LSB, boxes
 same count and labels within 0.01, drawn box images identical. Known
 exception: with PARITY_HEIGHTMAP, ogre2's visible-2D mode adds a spurious
-label-0 box for Terra. RGB is reported, never gated.
+label-0 box for Terra. RGB is reported, never gated. With PARITY_ACTOR
+(actor.txt) the visible-2D boxes are reported, not gated: ogre2's box ID
+pass (plain_color_vs) has no skinning and draws actors in bind pose, so its
+visible boxes of the actors, and of what they occlude, are wrong. Range
+outputs then also allow isolated silhouette pixels (at most 3 or 0.01%
+outside 5 mm, p99 within): the engines compose bone matrices in a different
+float order, and sub-micron vertex differences flip pixels on actor edges.
 """
 import os
 import re
@@ -231,10 +237,21 @@ def main(ref_dir, test_dir, png=None):
         wide_angle(ref_dir, test_dir, ref, tst, png)
     print(f"{'output':<20}{'n':>8}{'class!=':>9}{'max|d|':>10}"
           f"{'p99|d|':>10}{'p95|d|':>10}{'mean|d|':>10}{'>1cm%':>8}")
+    actor = os.path.exists(f"{ref_dir}/actor.txt")
     for name in ref:
         if name.startswith("wa_"):
             continue
         a, b = ref[name], tst[name]
+        if actor and "visible2d" in name:
+            n = len(FAILS)
+            if name.startswith("bbox_"):
+                compare_boxes(name, a[..., 0], b[..., 0])
+            else:
+                d = np.abs(a - b).max(-1)
+                print(f"{name:<20} differing pixels {int((d > 0).sum())}")
+            del FAILS[n:]
+            print("    not gated: ogre2 draws actors in bind pose here")
+            continue
         if name.startswith("bbox_"):
             compare_boxes(name, a[..., 0], b[..., 0])
             continue
@@ -261,7 +278,7 @@ def main(ref_dir, test_dir, png=None):
         if d.size == 0:
             fail(name, "no pixel finite in both")
             d = np.zeros(1)
-        gate(name, mism, d)
+        gate(name, mism, d, actor)
         print(f"{name:<20}{ca.size:>8}{mism:>9}{d.max():>10.4f}"
               f"{np.percentile(d, 99):>10.4f}{np.percentile(d, 95):>10.4f}"
               f"{d.mean():>10.5f}{100.0 * (d > 0.01).mean():>8.2f}")
@@ -312,7 +329,7 @@ def compare_boxes(name, a, b):
         fail(name, "labels or box geometry differ")
 
 
-def gate(name, mism, d):
+def gate(name, mism, d, actor=False):
     if name.startswith("seg_") or name.startswith("noise_"):
         return  # partition check / own report
     if name.startswith("bboxdraw_"):
@@ -324,6 +341,11 @@ def gate(name, mism, d):
     elif name == "thermal16":
         if np.percentile(d, 99) > 10 or d.max() > 100:
             fail(name, f"p99 {np.percentile(d, 99):.0f} max {d.max():.0f}")
+    elif actor:
+        over = mism + int((d > 0.005).sum())
+        print(f"    actor: {over} pixels/rays outside 5 mm")
+        if over > max(3, 1e-4 * d.size) or np.percentile(d, 99) > 0.005:
+            fail(name, f"{over} outside 5 mm, max {d.max():.4f} m")
     elif mism or d.max() > 0.005:
         fail(name, f"{mism} class mismatches, max {d.max():.4f} m")
 
