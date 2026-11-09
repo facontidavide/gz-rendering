@@ -36,6 +36,20 @@
 using namespace gz;
 using namespace rendering;
 
+namespace
+{
+  /// \brief gz matrices are row-major accessors, filament mat4 is indexed
+  /// [column][row]
+  filament::math::mat4 ToFilament(const math::Matrix4d &_m)
+  {
+    filament::math::mat4 out;
+    for (int c = 0; c < 4; ++c)
+      for (int r = 0; r < 4; ++r)
+        out[c][r] = _m(r, c);
+    return out;
+  }
+}
+
 //////////////////////////////////////////////////
 FilamentCamera::FilamentCamera()
 {
@@ -171,9 +185,86 @@ void FilamentCamera::CreateRenderTexture()
 }
 
 //////////////////////////////////////////////////
+bool FilamentCamera::Orthographic() const
+{
+  // Sensor subclasses never get here with CPT_ORTHOGRAPHIC: their
+  // SetProjectionType resolves to BaseCamera<FilamentCamera>, which only
+  // stores the type, like ogre2 (only Ogre2Camera honours it)
+  return this->projectionType == CPT_ORTHOGRAPHIC;
+}
+
+//////////////////////////////////////////////////
+math::Matrix4d FilamentCamera::WithDepthRows(math::Matrix4d _matrix,
+    double _near, double _far)
+{
+  const double invd = 1.0 / (_far - _near);
+  _matrix(2, 0) = 0.0;
+  _matrix(2, 1) = 0.0;
+  if (!math::equal(_matrix(3, 3), 0.0))
+  {
+    // orthographic
+    _matrix(2, 2) = -2.0 * invd;
+    _matrix(2, 3) = -(_far + _near) * invd;
+    return _matrix;
+  }
+  _matrix(2, 2) = -(_far + _near) * invd;
+  _matrix(2, 3) = -2.0 * _far * _near * invd;
+  _matrix(3, 0) = 0.0;
+  _matrix(3, 1) = 0.0;
+  _matrix(3, 2) = -1.0;
+  return _matrix;
+}
+
+//////////////////////////////////////////////////
+math::Matrix4d FilamentCamera::ProjectionMatrix() const
+{
+  if (this->customProjection)
+    return this->projectionMatrix;
+  if (this->Orthographic())
+  {
+    // ogre2 never sets an ortho window: ogre's default is 1000 units tall
+    const double height = 1000.0;
+    math::Matrix4d m = math::Matrix4d::Zero;
+    m(0, 0) = 2.0 / (height * this->AspectRatio());
+    m(1, 1) = 2.0 / height;
+    m(3, 3) = 1.0;
+    return WithDepthRows(m, this->NearClipPlane(), this->FarClipPlane());
+  }
+  return BaseCamera::ProjectionMatrix();
+}
+
+//////////////////////////////////////////////////
+void FilamentCamera::SetProjectionMatrix(const math::Matrix4d &_matrix)
+{
+  BaseCamera::SetProjectionMatrix(_matrix);
+  this->customProjection = true;
+}
+
+//////////////////////////////////////////////////
+void FilamentCamera::SetProjectionType(CameraProjectionType _type)
+{
+  BaseCamera::SetProjectionType(_type);
+  // like Ogre2Camera: a type change drops the custom matrix
+  this->customProjection = false;
+}
+
+//////////////////////////////////////////////////
 void FilamentCamera::SetClampedProjection(double _renderNear,
     double _renderFar)
 {
+  if (this->customProjection || this->Orthographic())
+  {
+    // image plane rows as given, depth rows from the clip planes: render
+    // with the render ones, cull with the camera's own (ogre2 rebuilds the
+    // depth row from its clip distances as well)
+    const math::Matrix4d m = this->ProjectionMatrix();
+    this->camera->setCustomProjection(
+        ToFilament(WithDepthRows(m, _renderNear, _renderFar)),
+        ToFilament(WithDepthRows(m, this->NearClipPlane(),
+            this->FarClipPlane())),
+        this->NearClipPlane(), this->FarClipPlane());
+    return;
+  }
   using filament::Camera;
   const double hfovDeg = this->HFOV().Degree();
   const double aspect = this->AspectRatio();
@@ -190,6 +281,11 @@ void FilamentCamera::UpdateProjection()
 {
   if (!this->camera)
     return;
+  if (this->customProjection || this->Orthographic())
+  {
+    this->SetClampedProjection(this->NearClipPlane(), this->FarClipPlane());
+    return;
+  }
   const double aspect = this->AspectRatio();
   const double hfovDeg = this->HFOV().Degree();
   this->camera->setProjection(hfovDeg, aspect, this->NearClipPlane(),

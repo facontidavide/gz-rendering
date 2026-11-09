@@ -57,6 +57,22 @@ namespace gz
 
       public: filament::Camera *Native() const;
 
+      /// \brief Like ogre2: the custom matrix as set, else the frustum
+      /// that is rendered
+      public: virtual math::Matrix4d ProjectionMatrix() const override;
+
+      /// \brief Rendered from the next frame on, see ogre2's
+      /// setCustomProjectionMatrix: rows 0, 1 and 3 are used as given,
+      /// the depth row encodes the camera's clip planes
+      public: virtual void SetProjectionMatrix(const math::Matrix4d &_matrix)
+          override;
+
+      /// \brief RGB only, like ogre2: sensor subclasses resolve
+      /// SetProjectionType to BaseCamera<FilamentCamera> (type stored,
+      /// rendering stays perspective). Clears a custom matrix.
+      public: virtual void SetProjectionType(CameraProjectionType _type)
+          override;
+
       protected: virtual RenderTargetPtr RenderTarget() const override;
 
       protected: virtual void Init() override;
@@ -70,8 +86,22 @@ namespace gz
       protected: void SetClampedProjection(double _renderNear,
                      double _renderFar);
 
-      /// \brief Push HFOV / aspect / near / far into the filament camera
+      /// \brief Push HFOV / aspect / near / far (or the custom /
+      /// orthographic projection) into the filament camera
       protected: void UpdateProjection();
+
+      /// \brief _matrix with the depth rows replaced to encode [_near, _far],
+      /// perspective or orthographic depending on _matrix's last row
+      protected: static math::Matrix4d WithDepthRows(math::Matrix4d _matrix,
+                     double _near, double _far);
+
+      /// \brief Set to CPT_ORTHOGRAPHIC (RGB camera only, see
+      /// SetProjectionType)
+      private: bool Orthographic() const;
+
+      /// \brief SetProjectionMatrix() was called (ogre2's
+      /// isCustomProjectionMatrixEnabled)
+      protected: bool customProjection{false};
 
       protected: filament::View *view{nullptr};
 

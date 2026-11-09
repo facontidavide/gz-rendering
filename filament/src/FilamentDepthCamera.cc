@@ -208,9 +208,20 @@ void FilamentDepthCamera::PostRender()
   const double nearClip = this->NearClipPlane();
   const double farClip = this->FarClipPlane();
   const double tol = 1e-6;
-  const double fx = (width * 0.5) / std::tan(this->HFOV().Radian() * 0.5);
-  const double cx = width * 0.5;
-  const double cy = height * 0.5;
+  double fx = (width * 0.5) / std::tan(this->HFOV().Radian() * 0.5);
+  double fy = fx;
+  double cx = width * 0.5;
+  double cy = height * 0.5;
+  if (this->customProjection)
+  {
+    // pinhole of the custom matrix (ogre2 interpolates the frustum corners
+    // of its inverse): x_ndc = (P00 x + P02 z) / -z, same for y
+    const math::Matrix4d proj = FilamentCamera::ProjectionMatrix();
+    fx = proj(0, 0) * width * 0.5;
+    fy = proj(1, 1) * height * 0.5;
+    cx = width * 0.5 * (1.0 - proj(0, 2));
+    cy = height * 0.5 * (1.0 + proj(1, 2));
+  }
   // ogre2 also writes the background color for clamped points; it
   // gamma-encodes it, the color pass target here is sRGB as well
   const math::Color bg = this->scene->BackgroundColor();
@@ -232,8 +243,10 @@ void FilamentDepthCamera::PostRender()
     const math::Pose3d world = this->WorldPose();
     particles = fp::Raster(*this->scene, world.Pos(),
         world.Rot().XAxis(), world.Rot().YAxis(), world.Rot().ZAxis(),
-        fx * pw / width, fx * ph / height, pw, ph,
+        fx * pw / width, fy * ph / height, pw, ph,
         nearClip * kNearScale, this->particleDepth.data());
+    // ponytail: particles assume a centered principal point, off-center
+    // custom matrices shift them by (cx, cy) - center; pass both if needed
   }
   // per frame seed, like ogre2's rnd uniform (gz::math::Rand stays seedable)
   std::minstd_rand rng;
@@ -261,14 +274,14 @@ void FilamentDepthCamera::PostRender()
         {
           // ranges along the pixel ray
           const double a = (u + 0.5 - cx) / fx;
-          const double b = (v + 0.5 - cy) / fx;
+          const double b = (v + 0.5 - cy) / fy;
           const double rayLen = std::sqrt(1.0 + a * a + b * b);
           d = fp::Scatter(uniform(rng), noise, pd * rayLen, d * rayLen) /
               rayLen;
         }
       }
       // camera frame: X forward, Y left, Z up
-      double p[3] = {d, -(u + 0.5 - cx) / fx * d, -(v + 0.5 - cy) / fx * d};
+      double p[3] = {d, -(u + 0.5 - cx) / fx * d, -(v + 0.5 - cy) / fy * d};
       bool clamped = false;
       if (std::isinf(d) ||
           std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) > farClip - tol)
@@ -308,6 +321,15 @@ void FilamentDepthCamera::PostRender()
     this->newRgbPointCloud(this->pointCloud.data(), width, height, 4u,
         "PF_FLOAT32_RGBA");
   }
+}
+
+//////////////////////////////////////////////////
+math::Matrix4d FilamentDepthCamera::ProjectionMatrix() const
+{
+  if (!this->customProjection)
+    return FilamentCamera::ProjectionMatrix();
+  return WithDepthRows(FilamentCamera::ProjectionMatrix(),
+      this->NearClipPlane(), this->FarClipPlane());
 }
 
 //////////////////////////////////////////////////

@@ -54,6 +54,13 @@ namespace gz
 
       public: virtual ~FilamentThermalCamera();
 
+      // BaseCamera<FilamentCamera> would otherwise win over FilamentCamera
+      public: virtual void SetProjectionMatrix(const math::Matrix4d &_matrix)
+          override { FilamentCamera::SetProjectionMatrix(_matrix); }
+
+      public: virtual math::Matrix4d ProjectionMatrix() const override
+          { return FilamentCamera::ProjectionMatrix(); }
+
       public: virtual void Render() override;
 
       public: virtual void PostRender() override;

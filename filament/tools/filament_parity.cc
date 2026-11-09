@@ -30,6 +30,8 @@
 // front of the depth cameras, lidars and thermal cameras, see Particles()
 // PARITY_NOISE=1: only the Gaussian noise pass outputs (RGB, wide angle,
 // depth + point cloud, thermal), see Noise()
+// PARITY_PROJECTION=1: only custom (off-center intrinsics) and orthographic
+// projections on depth, bbox and RGB cameras, see Projection()
 
 #include <algorithm>
 #include <chrono>
@@ -812,6 +814,164 @@ namespace
       conn.reset();
     }
   }
+
+  /// \brief GL projection matrix of a pinhole camera (fx, fy, cx, cy in
+  /// pixels, cy counted from the top row), like gz-sensors builds from SDF
+  /// <intrinsics>
+  math::Matrix4d Intrinsics(unsigned int _w, unsigned int _h, double _fx,
+      double _fy, double _cx, double _cy, double _near, double _far)
+  {
+    return math::Matrix4d(
+        2.0 * _fx / _w, 0, 1.0 - 2.0 * _cx / _w, 0,
+        0, 2.0 * _fy / _h, 2.0 * _cy / _h - 1.0, 0,
+        0, 0, -(_far + _near) / (_far - _near),
+        -2.0 * _far * _near / (_far - _near),
+        0, 0, -1, 0);
+  }
+
+  /// \brief PARITY_PROJECTION=1 outputs. proj_*: depthA with an off-center
+  /// intrinsics matrix; ortho_*: depthB set to CPT_ORTHOGRAPHIC (ogre2
+  /// renders sensor cameras perspective whatever the type);
+  /// bbox_proj_* / bboxdraw_proj_*: the bbox camera with an off-center
+  /// intrinsics matrix; projmat_*: ProjectionMatrix() of those cameras and
+  /// of an orthographic RGB camera (ogre's default ortho window).
+  /// rgb_ortho.png: RGB camera with an OrthoViewController-style custom
+  /// orthographic matrix, for eyeballing.
+  void Projection(ScenePtr _scene, const std::string &_dir,
+      std::ofstream &_index)
+  {
+    auto writeMatrix = [&](const std::string &_name, const math::Matrix4d &_m)
+    {
+      std::vector<float> f;
+      for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+          f.push_back(static_cast<float>(_m(r, c)));
+      Write(_dir, "projmat_" + _name, f.data(), 4, 4, 1, _index);
+    };
+
+    struct Cfg { std::string name; math::Pose3d pose; unsigned int w, h;
+        double hfov, nearClip, farClip; bool ortho; };
+    for (const Cfg &c : {
+        Cfg{"proj", {0, 0, 1, 0, 0.2, 0}, 320, 240, GZ_PI / 2, 0.1, 10, false},
+        Cfg{"ortho", {-1, 2, 0.5, 0, 0.1, -0.6}, 640, 480, GZ_PI / 3, 0.5, 6,
+            true}})
+    {
+      DepthCameraPtr cam = _scene->CreateDepthCamera(c.name);
+      cam->SetLocalPose(c.pose);
+      cam->SetImageWidth(c.w);
+      cam->SetImageHeight(c.h);
+      cam->SetAspectRatio(static_cast<double>(c.w) / c.h);
+      cam->SetHFOV(c.hfov);
+      cam->SetNearClipPlane(c.nearClip);
+      cam->SetFarClipPlane(c.farClip);
+      cam->CreateDepthTexture();
+      if (c.ortho)
+        cam->SetProjectionType(CPT_ORTHOGRAPHIC);
+      else
+      {
+        // wrong depth rows on purpose: the depth camera owns them
+        cam->SetProjectionMatrix(Intrinsics(c.w, c.h, 180, 190, 185, 100,
+            c.nearClip * 2, c.farClip * 3));
+      }
+      _scene->RootVisual()->AddChild(cam);
+      std::vector<float> depth(c.w * c.h), cloud(c.w * c.h * 4);
+      auto dc = cam->ConnectNewDepthFrame(
+          [&](const float *_d, unsigned int, unsigned int, unsigned int,
+              const std::string &) {
+            std::memcpy(depth.data(), _d, depth.size() * sizeof(float)); });
+      auto pc = cam->ConnectNewRgbPointCloud(
+          [&](const float *_d, unsigned int, unsigned int, unsigned int,
+              const std::string &) {
+            std::memcpy(cloud.data(), _d, cloud.size() * sizeof(float)); });
+      cam->Update();
+      Write(_dir, c.name + "_depth", depth.data(), c.w, c.h, 1, _index);
+      Write(_dir, c.name + "_cloud", cloud.data(), c.w, c.h, 4, _index);
+      writeMatrix(c.name, cam->ProjectionMatrix());
+      dc.reset();
+      pc.reset();
+    }
+
+    {
+      BoundingBoxCameraPtr bb = _scene->CreateBoundingBoxCamera("bbox");
+      bb->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+      bb->SetImageWidth(320);
+      bb->SetImageHeight(240);
+      bb->SetAspectRatio(320.0 / 240.0);
+      bb->SetHFOV(GZ_PI / 2);
+      bb->SetProjectionMatrix(Intrinsics(320, 240, 150, 155, 175, 110,
+          bb->NearClipPlane(), bb->FarClipPlane()));
+      _scene->RootVisual()->AddChild(bb);
+      writeMatrix("bbox", bb->ProjectionMatrix());
+      std::vector<BoundingBox> boxes;
+      auto conn = bb->ConnectNewBoundingBoxes(
+          [&](const std::vector<BoundingBox> &_b) { boxes = _b; });
+      for (auto type : {BoundingBoxType::BBT_VISIBLEBOX2D,
+                        BoundingBoxType::BBT_FULLBOX2D,
+                        BoundingBoxType::BBT_BOX3D})
+      {
+        const std::string t = type == BoundingBoxType::BBT_VISIBLEBOX2D ?
+            "visible2d" : type == BoundingBoxType::BBT_FULLBOX2D ? "full2d" :
+            "box3d";
+        bb->SetBoundingBoxType(type);
+        bb->Update();
+        std::vector<float> rows;
+        for (const BoundingBox &b : boxes)
+        {
+          const math::Quaterniond q = b.Orientation();
+          for (double v : {b.Center().X(), b.Center().Y(), b.Center().Z(),
+               b.Size().X(), b.Size().Y(), b.Size().Z(), q.W(), q.X(), q.Y(),
+               q.Z(), static_cast<double>(b.Label())})
+            rows.push_back(static_cast<float>(v));
+        }
+        Write(_dir, "bbox_proj_" + t, rows.data(), 11, boxes.size(), 1,
+            _index);
+        std::vector<uint8_t> img(320 * 240 * 3, 0);
+        for (const BoundingBox &b : boxes)
+          bb->DrawBoundingBox(img.data(), math::Color::Green, b);
+        WriteBytes(_dir, "bboxdraw_proj_" + t, img.data(), 320, 240, _index);
+      }
+      conn.reset();
+    }
+
+    _scene->SetAmbientLight(0.3, 0.3, 0.3);
+    DirectionalLightPtr sun = _scene->CreateDirectionalLight();
+    sun->SetDirection(-0.5, -0.5, -1);
+    sun->SetDiffuseColor(0.9, 0.9, 0.9);
+    _scene->RootVisual()->AddChild(sun);
+    for (bool custom : {false, true})
+    {
+      CameraPtr cam = _scene->CreateCamera(custom ? "rgb_ortho" : "rgb_ortho_default");
+      cam->SetLocalPose({-8, 8, 5, 0, 0.4, -GZ_PI / 4});
+      cam->SetImageWidth(640);
+      cam->SetImageHeight(480);
+      cam->SetAspectRatio(640.0 / 480.0);
+      cam->SetHFOV(GZ_PI / 3);
+      cam->SetNearClipPlane(0.1);
+      cam->SetFarClipPlane(50);
+      cam->SetProjectionType(CPT_ORTHOGRAPHIC);
+      _scene->RootVisual()->AddChild(cam);
+      if (!custom)
+      {
+        writeMatrix("rgb_ortho_default", cam->ProjectionMatrix());
+        continue;
+      }
+      // 16 x 12 m window, like OrthoViewController's
+      math::Matrix4d m = math::Matrix4d::Zero;
+      m(0, 0) = 2.0 / 16.0;
+      m(1, 1) = 2.0 / 12.0;
+      m(2, 2) = -2.0 / (50 - 0.1);
+      m(2, 3) = -(50 + 0.1) / (50 - 0.1);
+      m(3, 3) = 1.0;
+      cam->SetProjectionMatrix(m);
+      writeMatrix("rgb_ortho", cam->ProjectionMatrix());
+      Image img = cam->CreateImage();
+      cam->Capture(img);
+      common::Image png;
+      png.SetFromData(img.Data<unsigned char>(), 640, 480,
+          common::Image::RGB_INT8);
+      png.SavePNG(_dir + "/rgb_ortho.png");
+    }
+  }
 }
 
 int main(int _argc, char **_argv)
@@ -838,6 +998,13 @@ int main(int _argc, char **_argv)
   if (std::getenv("PARITY_WIDEANGLE"))
   {
     WideAngle(engine, scene, dir, index, timing, frames);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
+
+  if (std::getenv("PARITY_PROJECTION"))
+  {
+    Projection(scene, dir, index);
     std::cout << "wrote " << dir << std::endl;
     return 0;
   }
