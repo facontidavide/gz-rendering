@@ -28,6 +28,8 @@
 // per-object centroids, cutoff circle radius, Project3d), see WideAngle()
 // PARITY_PARTICLES=1: only particle statistics, with a particle emitter in
 // front of the depth cameras, lidars and thermal cameras, see Particles()
+// PARITY_NOISE=1: only the Gaussian noise pass outputs (RGB, wide angle,
+// depth + point cloud, thermal), see Noise()
 
 #include <algorithm>
 #include <chrono>
@@ -54,11 +56,13 @@
 #include <gz/rendering/Camera.hh>
 #include <gz/rendering/Capsule.hh>
 #include <gz/rendering/DepthCamera.hh>
+#include <gz/rendering/GaussianNoisePass.hh>
 #include <gz/rendering/Heightmap.hh>
 #include <gz/rendering/Light.hh>
 #include <gz/rendering/Image.hh>
 #include <gz/rendering/GpuRays.hh>
 #include <gz/rendering/RenderEngine.hh>
+#include <gz/rendering/RenderPassSystem.hh>
 #include <gz/rendering/RenderingIface.hh>
 #include <gz/rendering/Scene.hh>
 #include <gz/rendering/SegmentationCamera.hh>
@@ -428,6 +432,201 @@ namespace
     }
   }
 
+  /// \brief PARITY_NOISE=1: Gaussian noise render pass outputs, compared as
+  /// distributions by parity_compare.py. Per case a clean image from a twin
+  /// camera without the pass, then kNoiseFrames noisy frames:
+  /// noise_rgb_<cfg>: background-only scene (flat colors, clamping at 0 and
+  /// 1); noise_depth / noise_cloud: depthA in the main scene;
+  /// noise_thermal: thermal camera; noise_wa_face / noise_wa_final: wide
+  /// angle camera with the pass on the cube faces / after stitching.
+  void Noise(RenderEngine *_engine, ScenePtr _scene, const std::string &_dir,
+      std::ofstream &_index)
+  {
+    const int kNoiseFrames = 8;
+    std::ofstream cfg(_dir + "/noise_cfg.txt");
+    auto pass = [&](const std::string &_name, double _mean, double _stddev,
+        bool _afterStitching = false)
+    {
+      cfg << _name << " " << _mean << " " << _stddev << "\n";
+      GaussianNoisePassPtr p = std::dynamic_pointer_cast<GaussianNoisePass>(
+          _engine->RenderPassSystem()->Create<GaussianNoisePass>());
+      p->SetMean(_mean);
+      p->SetStdDev(_stddev);
+      p->SetWideAngleCameraAfterStitching(_afterStitching);
+      return p;
+    };
+    auto rgb = [&](const std::string &_name, CameraPtr _cam)
+    {
+      Image img = _cam->CreateImage();
+      _cam->Capture(img);
+      WriteBytes(_dir, _name, img.Data<uint8_t>(), img.Width(),
+          img.Height(), _index);
+    };
+
+    // RGB: flat background colors, linear (0.5, 0, 1) and (0.2, 0.6, 0.9)
+    ScenePtr flat = _engine->CreateScene("noise_flat");
+    struct RgbCfg { std::string name; math::Color bg; double mean, stddev; };
+    const std::vector<RgbCfg> rgbCfgs = {
+      {"wide", {0.5f, 0.0f, 1.0f}, 0.0, 0.3},
+      {"biased", {0.2f, 0.6f, 0.9f}, 0.1, 0.05},
+    };
+    for (const auto &c : rgbCfgs)
+    {
+      flat->SetBackgroundColor(c.bg);
+      CameraPtr cams[2];
+      for (int k = 0; k < 2; ++k)
+      {
+        cams[k] = flat->CreateCamera("noise_rgb_" + c.name + std::to_string(k));
+        cams[k]->SetImageWidth(320);
+        cams[k]->SetImageHeight(240);
+        cams[k]->SetAspectRatio(320.0 / 240.0);
+        flat->RootVisual()->AddChild(cams[k]);
+      }
+      cams[1]->AddRenderPass(pass("rgb_" + c.name, c.mean, c.stddev));
+      rgb("noise_rgb_" + c.name + "_clean", cams[0]);
+      for (int f = 0; f < kNoiseFrames; ++f)
+        rgb("noise_rgb_" + c.name + "_f" + std::to_string(f), cams[1]);
+    }
+
+    // a zero noise pass must not change a structured image (orientation,
+    // sRGB round trip): the lit main scene
+    {
+      _scene->SetAmbientLight(0.3, 0.3, 0.3);
+      DirectionalLightPtr sun = _scene->CreateDirectionalLight();
+      sun->SetDirection(-0.5, -0.5, -1);
+      sun->SetDiffuseColor(0.9, 0.9, 0.9);
+      _scene->RootVisual()->AddChild(sun);
+      CameraPtr cams[2];
+      for (int k = 0; k < 2; ++k)
+      {
+        cams[k] = _scene->CreateCamera("noise_zero" + std::to_string(k));
+        cams[k]->SetLocalPose({-8, 8, 5, 0, 0.4, -GZ_PI / 4});
+        cams[k]->SetImageWidth(320);
+        cams[k]->SetImageHeight(240);
+        cams[k]->SetAspectRatio(320.0 / 240.0);
+        cams[k]->SetHFOV(GZ_PI / 3);
+        _scene->RootVisual()->AddChild(cams[k]);
+      }
+      cams[1]->AddRenderPass(pass("rgb_zero", 0.0, 0.0));
+      rgb("noise_rgb_zero_clean", cams[0]);
+      rgb("noise_rgb_zero_f0", cams[1]);
+    }
+
+    // wide angle, background only: pass on the faces / on the final image
+    {
+      flat->SetBackgroundColor(0.5, 0.0, 1.0);
+      WideAngleCameraPtr cams[3];
+      for (int k = 0; k < 3; ++k)
+      {
+        cams[k] = flat->CreateWideAngleCamera("noise_wa" + std::to_string(k));
+        CameraLens lens;
+        lens.SetCustomMappingFunction(1.05, 4.0, AFT_TAN, 1.0, 0.0);
+        lens.SetType(MFT_CUSTOM);
+        lens.SetCutOffAngle(GZ_PI);
+        lens.SetScaleToHFOV(true);
+        cams[k]->SetLens(lens);
+        cams[k]->SetHFOV(2.6);
+        cams[k]->SetImageWidth(320);
+        cams[k]->SetImageHeight(240);
+        cams[k]->SetAspectRatio(320.0 / 240.0);
+        flat->RootVisual()->AddChild(cams[k]);
+      }
+      cams[1]->AddRenderPass(pass("wa_face", 0.0, 0.3, false));
+      cams[2]->AddRenderPass(pass("wa_final", 0.0, 0.3, true));
+      rgb("noise_wa_clean", cams[0]);
+      for (int f = 0; f < kNoiseFrames; ++f)
+      {
+        rgb("noise_wa_face_f" + std::to_string(f), cams[1]);
+        rgb("noise_wa_final_f" + std::to_string(f), cams[2]);
+      }
+    }
+
+    // depth camera (depthA of the default run) in the main scene; besides
+    // a realistic noise, strong ones pushing points past near / far
+    {
+      const unsigned int w = 320, h = 240;
+      struct DepthNoiseCfg { std::string name; double mean, stddev; };
+      const std::vector<DepthNoiseCfg> cfgs = {{"", 0.0, 0.0},
+          {"depth", 0.1, 0.05}, {"depth_near", -1.0, 0.5},
+          {"depth_far", 1.0, 0.5}};
+      std::vector<float> depth(w * h), cloud(w * h * 4);
+      for (const auto &c : cfgs)
+      {
+        DepthCameraPtr cam = _scene->CreateDepthCamera("noise_" + c.name);
+        cam->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+        cam->SetImageWidth(w);
+        cam->SetImageHeight(h);
+        cam->SetAspectRatio(static_cast<double>(w) / h);
+        cam->SetHFOV(GZ_PI / 2);
+        cam->SetNearClipPlane(0.1);
+        cam->SetFarClipPlane(10);
+        cam->CreateDepthTexture();
+        _scene->RootVisual()->AddChild(cam);
+        if (!c.name.empty())
+          cam->AddRenderPass(pass(c.name, c.mean, c.stddev));
+        auto dc = cam->ConnectNewDepthFrame(
+            [&](const float *_d, unsigned int, unsigned int, unsigned int,
+                const std::string &) {
+              std::memcpy(depth.data(), _d, depth.size() * sizeof(float)); });
+        auto pc = cam->ConnectNewRgbPointCloud(
+            [&](const float *_d, unsigned int, unsigned int, unsigned int,
+                const std::string &) {
+              std::memcpy(cloud.data(), _d, cloud.size() * sizeof(float)); });
+        for (int f = 0; f < (c.name.empty() ? 1 : kNoiseFrames); ++f)
+        {
+          cam->Update();
+          const std::string s = c.name.empty() ? "depth_clean" :
+              c.name + "_f" + std::to_string(f);
+          Write(_dir, "noise_" + s, depth.data(), w, h, 1, _index);
+          Write(_dir, "noise_cloud_" + s, cloud.data(), w, h, 4, _index);
+        }
+      }
+    }
+
+    // thermal camera (thermal16 of the default run)
+    {
+      ThermalCameraPtr cams[2];
+      std::vector<uint16_t> img(320 * 240);
+      for (int k = 0; k < 2; ++k)
+      {
+        ThermalCameraPtr th = _scene->CreateThermalCamera(
+            "noise_thermal" + std::to_string(k));
+        th->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+        th->SetImageWidth(320);
+        th->SetImageHeight(240);
+        th->SetAspectRatio(320.0 / 240.0);
+        th->SetHFOV(GZ_PI / 2);
+        th->SetNearClipPlane(0.5);
+        th->SetFarClipPlane(10);
+        th->SetImageFormat(PF_L16);
+        th->SetAmbientTemperature(296.0f);
+        th->SetAmbientTemperatureRange(4.0f);
+        th->SetHeatSourceTemperatureRange(2.0f);
+        th->SetLinearResolution(0.01f);
+        th->SetMinTemperature(250.0f);
+        th->SetMaxTemperature(400.0f);
+        _scene->RootVisual()->AddChild(th);
+        cams[k] = th;
+      }
+      cams[1]->AddRenderPass(pass("thermal", 0.1, 0.05));
+      for (int k = 0; k < 2; ++k)
+      {
+        auto conn = cams[k]->ConnectNewThermalFrame(
+            [&](const uint16_t *_d, unsigned int, unsigned int, unsigned int,
+                const std::string &) {
+              std::memcpy(img.data(), _d, img.size() * sizeof(uint16_t)); });
+        for (int f = 0; f < (k == 0 ? 1 : 2); ++f)
+        {
+          cams[k]->Update();
+          std::vector<float> fl(img.begin(), img.end());
+          Write(_dir, "noise_thermal" +
+              (k == 0 ? std::string("_clean") : "_f" + std::to_string(f)),
+              fl.data(), 320, 240, 1, _index);
+        }
+      }
+    }
+  }
+
   struct DepthCfg
   {
     std::string name; math::Pose3d pose; unsigned int w, h;
@@ -639,6 +838,13 @@ int main(int _argc, char **_argv)
   if (std::getenv("PARITY_WIDEANGLE"))
   {
     WideAngle(engine, scene, dir, index, timing, frames);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
+
+  if (std::getenv("PARITY_NOISE"))
+  {
+    Noise(engine, scene, dir, index);
     std::cout << "wrote " << dir << std::endl;
     return 0;
   }

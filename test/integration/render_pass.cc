@@ -163,7 +163,7 @@ TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(GaussianNoise))
 TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_MAC(DepthGaussianNoise))
 {
   CHECK_RENDERPASS_SUPPORTED();
-  CHECK_SUPPORTED_ENGINE("ogre2");
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
 
   int imgWidth = 10;
   int imgHeight = 10;
@@ -366,8 +366,8 @@ TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_MAC(DepthGaussianNoise))
 TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(Distortion))
 {
   CHECK_RENDERPASS_SUPPORTED();
-  // Distortion isn't supported in ogre2
-  CHECK_UNSUPPORTED_ENGINE("ogre2");
+  // Distortion isn't supported in ogre2 nor filament
+  CHECK_UNSUPPORTED_ENGINE("ogre2", "filament");
 
   // add resources in build dir
   this->engine->AddResourcePath(
@@ -867,6 +867,8 @@ static void TestLensFlare(gz::rendering::RenderEngine *_engine,
 TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(LensFlarePass))
 {
   CHECK_RENDERPASS_SUPPORTED();
+  // Lens flare is ogre2 only
+  CHECK_UNSUPPORTED_ENGINE("filament");
 
   TestLensFlare(this->engine, false);
 }
@@ -875,6 +877,8 @@ TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(LensFlarePass))
 TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(LensFlareWideAnglePass))
 {
   CHECK_RENDERPASS_SUPPORTED();
+  // Lens flare is ogre2 only
+  CHECK_UNSUPPORTED_ENGINE("filament");
 
   TestLensFlare(this->engine, true);
 }

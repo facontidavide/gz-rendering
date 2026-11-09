@@ -205,4 +205,5 @@ void FilamentCamera::Render()
   this->view->setVisibleLayers(0xff,
       FilamentConversions::ToLayers(this->VisibilityMask()));
   this->renderTexture->Render(this->view);
+  this->renderTexture->ApplyRenderPasses(this->renderTexture->RenderPasses());
 }

@@ -17,6 +17,8 @@
 #ifndef GZ_RENDERING_FILAMENT_FILAMENTRENDERTARGET_HH_
 #define GZ_RENDERING_FILAMENT_FILAMENTRENDERTARGET_HH_
 
+#include <vector>
+
 #include <math/vec4.h>
 
 #include "gz/rendering/config.hh"
@@ -67,6 +69,14 @@ namespace gz
       /// \brief Color attachment, e.g. to sample it in a later pass
       public: filament::Texture *ColorTexture() const;
 
+      /// \brief Run the enabled filament passes of _passes (Gaussian noise)
+      /// over the color attachment, in order. Afterwards Native() and
+      /// ColorTexture() name the attachments holding the result.
+      public: void ApplyRenderPasses(const std::vector<RenderPassPtr> &_passes);
+
+      /// \brief Passes added with AddRenderPass
+      public: const std::vector<RenderPassPtr> &RenderPasses() const;
+
       /// \brief 8 bit formats are sRGB encoded by default (camera images);
       /// false stores values as is (e.g. segmentation labels)
       public: void SetSrgb(bool _srgb);
@@ -75,11 +85,24 @@ namespace gz
 
       protected: void DestroyTarget();
 
+      /// \brief Create a color + depth attachment pair for the current
+      /// size and format
+      private: void BuildAttachments(filament::RenderTarget *&_target,
+          filament::Texture *&_color, filament::Texture *&_depth) const;
+
       protected: filament::Texture *colorTexture{nullptr};
 
       protected: filament::Texture *depthTexture{nullptr};
 
       protected: filament::RenderTarget *target{nullptr};
+
+      /// \brief Second attachment set for ApplyRenderPasses, built on
+      /// first use
+      private: filament::RenderTarget *scratchTarget{nullptr};
+
+      private: filament::Texture *scratchColor{nullptr};
+
+      private: filament::Texture *scratchDepth{nullptr};
 
       protected: filament::math::float4 clearColor{0.0f, 0.0f, 0.0f, 1.0f};
 
