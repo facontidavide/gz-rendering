@@ -40,6 +40,10 @@ namespace gz
 
       public: virtual void SetVisibilityFlags(uint32_t _flags) override;
 
+      /// \brief Draw this visual's meshes as edges (filament has no
+      /// wireframe raster mode)
+      public: virtual void SetWireframe(bool _show) override;
+
       public: virtual math::AxisAlignedBox LocalBoundingBox() const override;
 
       public: virtual math::AxisAlignedBox BoundingBox() const override;

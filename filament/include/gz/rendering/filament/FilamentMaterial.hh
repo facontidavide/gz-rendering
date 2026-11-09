@@ -73,6 +73,115 @@ namespace gz
 
       public: virtual float Metalness() const override;
 
+      // documentation inherited
+      public: virtual bool HasNormalMap() const override;
+
+      // documentation inherited
+      public: virtual std::string NormalMap() const override;
+
+      // documentation inherited
+      public: virtual std::shared_ptr<const common::Image> NormalMapData()
+          const override;
+
+      // documentation inherited
+      public: virtual void SetNormalMap(const std::string &_name,
+          const std::shared_ptr<const common::Image> &_img) override;
+
+      // documentation inherited
+      public: virtual void ClearNormalMap() override;
+
+      // documentation inherited
+      public: virtual bool HasRoughnessMap() const override;
+
+      // documentation inherited
+      public: virtual std::string RoughnessMap() const override;
+
+      // documentation inherited
+      public: virtual std::shared_ptr<const common::Image> RoughnessMapData()
+          const override;
+
+      // documentation inherited
+      public: virtual void SetRoughnessMap(const std::string &_name,
+          const std::shared_ptr<const common::Image> &_img) override;
+
+      // documentation inherited
+      public: virtual void ClearRoughnessMap() override;
+
+      // documentation inherited
+      public: virtual bool HasMetalnessMap() const override;
+
+      // documentation inherited
+      public: virtual std::string MetalnessMap() const override;
+
+      // documentation inherited
+      public: virtual std::shared_ptr<const common::Image> MetalnessMapData()
+          const override;
+
+      // documentation inherited
+      public: virtual void SetMetalnessMap(const std::string &_name,
+          const std::shared_ptr<const common::Image> &_img) override;
+
+      // documentation inherited
+      public: virtual void ClearMetalnessMap() override;
+
+      // documentation inherited
+      public: virtual bool HasEnvironmentMap() const override;
+
+      // documentation inherited
+      public: virtual std::string EnvironmentMap() const override;
+
+      // documentation inherited
+      public: virtual std::shared_ptr<const common::Image> EnvironmentMapData()
+          const override;
+
+      // documentation inherited
+      public: virtual void SetEnvironmentMap(const std::string &_name,
+          const std::shared_ptr<const common::Image> &_img) override;
+
+      // documentation inherited
+      public: virtual void ClearEnvironmentMap() override;
+
+      // documentation inherited
+      public: virtual bool HasEmissiveMap() const override;
+
+      // documentation inherited
+      public: virtual std::string EmissiveMap() const override;
+
+      // documentation inherited
+      public: virtual std::shared_ptr<const common::Image> EmissiveMapData()
+          const override;
+
+      // documentation inherited
+      public: virtual void SetEmissiveMap(const std::string &_name,
+          const std::shared_ptr<const common::Image> &_img) override;
+
+      // documentation inherited
+      public: virtual void ClearEmissiveMap() override;
+
+      // documentation inherited
+      public: virtual bool HasLightMap() const override;
+
+      // documentation inherited
+      public: virtual std::string LightMap() const override;
+
+      // documentation inherited
+      public: virtual unsigned int LightMapTexCoordSet() const override;
+
+      // documentation inherited
+      public: virtual std::shared_ptr<const common::Image> LightMapData()
+          const override;
+
+      // documentation inherited
+      public: virtual void SetLightMap(const std::string &_name,
+          const std::shared_ptr<const common::Image> &_img,
+          unsigned int _uvSet = 0u) override;
+
+      // documentation inherited
+      public: virtual void ClearLightMap() override;
+
+      // documentation inherited
+      public: virtual enum MaterialType Type() const override;
+
       /// \brief Active material instance (lit or unlit)
       public: filament::MaterialInstance *Instance() const;
 
@@ -101,9 +210,36 @@ namespace gz
       /// uniform uploads
       protected: bool pushed{false};
 
-      protected: std::array<float, 11> pushedKey{};
+      protected: std::array<float, 16> pushedKey{};
 
       protected: filament::Texture *pushedTexture{nullptr};
+
+      /// \brief PBR texture maps, in MapSlot order
+      protected: enum MapSlot { NORMAL, ROUGHNESS, METALNESS, EMISSIVE, LIGHT,
+          ENVIRONMENT, MAP_COUNT };
+
+      /// \brief A texture map: name and optional in-memory image as set, and
+      /// the filament texture loaded from them in PreRender
+      protected: struct Map
+      {
+        std::string name;
+        std::shared_ptr<const common::Image> data;
+        filament::Texture *texture{nullptr};
+        bool loaded{false};
+      };
+
+      /// \brief Set a map slot (empty name clears it)
+      protected: void SetMap(MapSlot _slot, const std::string &_name,
+          const std::shared_ptr<const common::Image> &_img);
+
+      /// \brief Texture maps
+      protected: std::array<Map, MAP_COUNT> maps;
+
+      /// \brief Light map texture coordinate set
+      protected: unsigned int lightMapUvSet{0u};
+
+      /// \brief Map textures last pushed to the instances
+      protected: std::array<filament::Texture *, MAP_COUNT> pushedMaps{};
 
       protected: std::shared_ptr<const common::Image> textureData;
 

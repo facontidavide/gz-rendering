@@ -73,6 +73,10 @@ namespace gz
       public: void ReplaceInstance(filament::MaterialInstance *_old,
           filament::MaterialInstance *_new);
 
+      /// \brief Draw the triangle submeshes as their edges (LINES), or back
+      /// as triangles. ogre2's wireframe polygon mode, which filament lacks.
+      public: void SetWireframe(bool _wireframe);
+
       /// \brief Register a submesh built by the mesh factory
       public: void AddSubMesh(FilamentSubMeshPtr _subMesh);
 
@@ -121,6 +125,12 @@ namespace gz
       /// \brief Owns vertexBuffer / indexBuffer, which are shared by every
       /// submesh built from the same common::SubMesh
       protected: std::shared_ptr<void> geometry;
+
+      /// \brief Index of the common::SubMesh this was built from
+      protected: unsigned int subMeshIndex{0u};
+
+      /// \brief Edge (LINES) index buffer while drawn as wireframe
+      protected: filament::IndexBuffer *lineBuffer{nullptr};
 
       /// \brief Instance currently bound on the GPU side
       protected: filament::MaterialInstance *bound{nullptr};

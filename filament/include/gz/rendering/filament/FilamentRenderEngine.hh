@@ -88,11 +88,23 @@ namespace gz
       /// e.g. "gz_lit", looked up under the engine resource path.
       public: filament::Material *Material(const std::string &_name);
 
-      /// \brief Get (and lazily load, cached) a 2D texture from an image file
       /// \brief Cached texture by name. Loaded from _data when given, else
       /// from the file _path; an empty name gives a 1x1 white texture.
+      /// _srgb: color data (sRGB), else linear data (normal, roughness and
+      /// metalness maps).
       public: filament::Texture *Texture(const std::string &_path,
-          std::shared_ptr<const common::Image> _data = nullptr);
+          std::shared_ptr<const common::Image> _data = nullptr,
+          bool _srgb = true);
+
+      /// \brief Cached cube map from a DDS file (DXT1/DXT5, six faces, like
+      /// ogre2's skybox.dds), looked up as given, then under the resource
+      /// path's textures. Faces are converted from Ogre's left-handed cube
+      /// map convention. An empty name gives a 1x1 black cube map; nullptr
+      /// if the file can not be loaded. _srgb: decode the texels as sRGB
+      /// (material environment maps, like ogre2), else read them as linear
+      /// values (ogre2's skybox samples without gamma).
+      public: filament::Texture *CubeTexture(const std::string &_path,
+          bool _srgb = false);
 
       /// \brief Get the resource path used to find compiled materials
       public: std::string ResourcePath() const;

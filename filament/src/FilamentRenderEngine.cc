@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <vector>
@@ -192,9 +193,10 @@ filament::Material *FilamentRenderEngine::Material(const std::string &_name)
 
 //////////////////////////////////////////////////
 filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
-    std::shared_ptr<const common::Image> _data)
+    std::shared_ptr<const common::Image> _data, bool _srgb)
 {
-  auto it = this->dataPtr->textures.find(_path);
+  const std::string key = _srgb ? _path : _path + "\n(linear)";
+  auto it = this->dataPtr->textures.find(key);
   if (it != this->dataPtr->textures.end())
     return it->second;
 
@@ -242,7 +244,8 @@ filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
   // full mip chain, like ogre2 (it auto-generates mipmaps for albedo
   // maps): minified textures average instead of aliasing
   auto &engine = *this->dataPtr->engine;
-  const auto format = filament::Texture::InternalFormat::SRGB8_A8;
+  const auto format = _srgb ? filament::Texture::InternalFormat::SRGB8_A8 :
+      filament::Texture::InternalFormat::RGBA8;
   const bool mips = filament::Texture::isTextureFormatMipmappable(engine,
       format);
   uint8_t levels = 1u;
@@ -262,7 +265,178 @@ filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
   tex->setImage(engine, 0, std::move(desc));
   if (levels > 1u)
     tex->generateMipmaps(engine);
-  this->dataPtr->textures[_path] = tex;
+  this->dataPtr->textures[key] = tex;
+  return tex;
+}
+
+namespace
+{
+  /// \brief Decode a BC1 (DXT1) or BC3 (DXT5) surface to RGBA8
+  void DecodeBc(const uint8_t *_src, unsigned int _w, unsigned int _h,
+      bool _bc3, uint8_t *_dst)
+  {
+    const unsigned int bw = (_w + 3u) / 4u;
+    const unsigned int bh = (_h + 3u) / 4u;
+    for (unsigned int by = 0; by < bh; ++by)
+    {
+      for (unsigned int bx = 0; bx < bw; ++bx)
+      {
+        const uint8_t *b = _src + (by * bw + bx) * (_bc3 ? 16u : 8u);
+        uint8_t alpha[16];
+        std::fill(alpha, alpha + 16, 255);
+        if (_bc3)
+        {
+          int a[8] = {b[0], b[1]};
+          for (int i = 2; i < 8; ++i)
+          {
+            a[i] = a[0] > a[1] ? ((8 - i) * a[0] + (i - 1) * a[1]) / 7 :
+                i < 6 ? ((6 - i) * a[0] + (i - 1) * a[1]) / 5 :
+                i == 6 ? 0 : 255;
+          }
+          uint64_t bits = 0;
+          for (int k = 0; k < 6; ++k)
+            bits |= static_cast<uint64_t>(b[2 + k]) << (8 * k);
+          for (int p = 0; p < 16; ++p)
+            alpha[p] = static_cast<uint8_t>(a[(bits >> (3 * p)) & 7u]);
+          b += 8;
+        }
+        const unsigned int c[2] = {b[0] | (b[1] << 8u), b[2] | (b[3] << 8u)};
+        int pal[4][4];
+        for (int i = 0; i < 2; ++i)
+        {
+          pal[i][0] = ((c[i] >> 11) & 31) * 255 / 31;
+          pal[i][1] = ((c[i] >> 5) & 63) * 255 / 63;
+          pal[i][2] = (c[i] & 31) * 255 / 31;
+          pal[i][3] = 255;
+        }
+        const bool four = _bc3 || c[0] > c[1];
+        for (int k = 0; k < 3; ++k)
+        {
+          pal[2][k] = four ? (2 * pal[0][k] + pal[1][k]) / 3 :
+              (pal[0][k] + pal[1][k]) / 2;
+          pal[3][k] = four ? (pal[0][k] + 2 * pal[1][k]) / 3 : 0;
+        }
+        pal[2][3] = 255;
+        pal[3][3] = four ? 255 : 0;
+        const uint32_t idx = b[4] | (b[5] << 8u) | (b[6] << 16u) |
+            (static_cast<uint32_t>(b[7]) << 24u);
+        for (unsigned int p = 0; p < 16; ++p)
+        {
+          const unsigned int x = bx * 4u + p % 4u;
+          const unsigned int y = by * 4u + p / 4u;
+          if (x >= _w || y >= _h)
+            continue;
+          const int *col = pal[(idx >> (2u * p)) & 3u];
+          uint8_t *d = _dst + (static_cast<size_t>(y) * _w + x) * 4u;
+          d[0] = static_cast<uint8_t>(col[0]);
+          d[1] = static_cast<uint8_t>(col[1]);
+          d[2] = static_cast<uint8_t>(col[2]);
+          d[3] = _bc3 ? alpha[p] : static_cast<uint8_t>(col[3]);
+        }
+      }
+    }
+  }
+}
+
+//////////////////////////////////////////////////
+filament::Texture *FilamentRenderEngine::CubeTexture(const std::string &_path,
+    bool _srgb)
+{
+  const std::string key = (_srgb ? "\n(cube srgb)" : "\n(cube)") + _path;
+  auto it = this->dataPtr->textures.find(key);
+  if (it != this->dataPtr->textures.end())
+    return it->second;
+
+  unsigned int size = 1u;
+  std::vector<uint8_t> faces(6u * 4u, 0u);
+  if (!_path.empty())
+  {
+    std::string path = _path;
+    if (!common::exists(path))
+    {
+      path = common::joinPaths(this->dataPtr->resourcePath, "textures",
+          common::basename(_path));
+    }
+    std::ifstream file(path, std::ios::binary);
+    std::vector<uint8_t> dds((std::istreambuf_iterator<char>(file)),
+        std::istreambuf_iterator<char>());
+    auto u32 = [&](size_t _o)
+    {
+      return static_cast<uint32_t>(dds[_o] | (dds[_o + 1] << 8u) |
+          (dds[_o + 2] << 16u) | (dds[_o + 3] << 24u));
+    };
+    const bool isDds = dds.size() >= 128u &&
+        std::equal(dds.begin(), dds.begin() + 4, "DDS ");
+    const std::string fourcc = isDds ?
+        std::string(dds.begin() + 84, dds.begin() + 88) : "";
+    const bool bc3 = fourcc == "DXT5";
+    const uint32_t w = isDds ? u32(16) : 0u;
+    const uint32_t mips = isDds ? std::max(1u, u32(28)) : 0u;
+    // block-compressed bytes of one face, mip chain included
+    size_t faceBytes = 0u;
+    for (uint32_t l = 0; l < mips; ++l)
+    {
+      const size_t s = std::max(1u, ((w >> l) + 3u) / 4u);
+      faceBytes += s * s * (bc3 ? 16u : 8u);
+    }
+    if (!isDds || (fourcc != "DXT1" && !bc3) || !(u32(112) & 0x200u) ||
+        u32(12) != w || w == 0u || dds.size() < 128u + 6u * faceBytes)
+    {
+      gzerr << "Unable to load cube map [" << _path << "]: only DXT1/DXT5 "
+            << "DDS cube maps are supported" << std::endl;
+      return nullptr;
+    }
+    size = w;
+    const size_t faceSize = static_cast<size_t>(size) * size * 4u;
+    std::vector<uint8_t> ogre(6u * faceSize);
+    for (int f = 0; f < 6; ++f)
+    {
+      DecodeBc(dds.data() + 128u + f * faceBytes, size, size, bc3,
+          ogre.data() + f * faceSize);
+    }
+    // Ogre samples its (left-handed) cube maps at (x, y, -z). Filament
+    // samples at (x, y, z): mirror the faces through the z = 0 plane.
+    // +-X faces flip horizontally, +-Y faces vertically, +Z and -Z swap
+    // and flip horizontally.
+    faces.resize(6u * faceSize);
+    const int src[6] = {0, 1, 2, 3, 5, 4};
+    for (int f = 0; f < 6; ++f)
+    {
+      const bool flipV = f == 2 || f == 3;
+      for (unsigned int y = 0; y < size; ++y)
+      {
+        for (unsigned int x = 0; x < size; ++x)
+        {
+          const unsigned int sx = flipV ? x : size - 1u - x;
+          const unsigned int sy = flipV ? size - 1u - y : y;
+          std::memcpy(faces.data() + f * faceSize + (y * size + x) * 4u,
+              ogre.data() + src[f] * faceSize + (sy * size + sx) * 4u, 4u);
+        }
+      }
+    }
+  }
+
+  auto &engine = *this->dataPtr->engine;
+  uint8_t levels = 1u;
+  while ((size >> levels) > 0u)
+    ++levels;
+  filament::Texture *tex = filament::Texture::Builder()
+      .width(size).height(size).levels(levels)
+      .sampler(filament::Texture::Sampler::SAMPLER_CUBEMAP)
+      .format(_srgb ? filament::Texture::InternalFormat::SRGB8_A8 :
+          filament::Texture::InternalFormat::RGBA8)
+      .usage(filament::Texture::Usage::DEFAULT |
+             filament::Texture::Usage::GEN_MIPMAPPABLE)
+      .build(engine);
+  auto *buf = new uint8_t[faces.size()];
+  std::memcpy(buf, faces.data(), faces.size());
+  tex->setImage(engine, 0, 0, 0, 0, size, size, 6,
+      filament::Texture::PixelBufferDescriptor(buf, faces.size(),
+      filament::Texture::Format::RGBA, filament::Texture::Type::UBYTE,
+      [](void *_b, size_t, void *) { delete[] static_cast<uint8_t *>(_b); }));
+  if (levels > 1u)
+    tex->generateMipmaps(engine);
+  this->dataPtr->textures[key] = tex;
   return tex;
 }
 

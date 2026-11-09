@@ -29,6 +29,7 @@
 namespace filament
 {
   class IndirectLight;
+  class Skybox;
   class Scene;
 }
 
@@ -63,6 +64,12 @@ namespace gz
           const math::Vector2i &_mousePos) override;
 
       public: virtual void SetAmbientLight(const math::Color &_color) override;
+
+      // Documentation inherited.
+      public: virtual void SetSkyEnabled(bool _enabled) override;
+
+      // Documentation inherited.
+      public: virtual bool SkyEnabled() const override;
 
       /// \brief Native filament scene
       public: filament::Scene *Native() const;
@@ -229,6 +236,9 @@ namespace gz
       protected: filament::Scene *scene{nullptr};
 
       protected: filament::IndirectLight *ambientLight{nullptr};
+
+      /// \brief Skybox drawn when the sky is enabled
+      protected: filament::Skybox *skybox{nullptr};
 
       protected: math::Color ambient;
 

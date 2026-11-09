@@ -39,7 +39,7 @@ class SkyTest: public CommonRenderingTest
 /////////////////////////////////////////////////
 TEST_F(SkyTest, Sky)
 {
-  CHECK_SUPPORTED_ENGINE("ogre2");
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
 
   // add resources in build dir
   engine->AddResourcePath(
@@ -123,7 +123,7 @@ TEST_F(SkyTest, Sky)
 /////////////////////////////////////////////////
 TEST_F(SkyTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(WideAngleCamera))
 {
-  CHECK_SUPPORTED_ENGINE("ogre2");
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
 
   // add resources in build dir
   engine->AddResourcePath(

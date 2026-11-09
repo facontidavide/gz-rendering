@@ -195,12 +195,36 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
       for (unsigned int j = 0; j < ni; ++j)
         idx[j] = static_cast<uint32_t>(s->Index(j));
 
+      // texture coordinates, interleaved: uv0 (set 0) and uv1 (set 1, for
+      // light maps; a copy of set 0 when the mesh has a single set)
+      auto *uv = new float4[nv];
+      const bool hasUv = s->TexCoordCount() == nv;
+      const bool hasUv1 = s->TexCoordCountBySet(1u) == nv;
+      for (unsigned int j = 0; j < nv; ++j)
+      {
+        if (hasUv)
+        {
+          // gz UVs have a top-left origin (like Ogre). Textures are
+          // uploaded bottom row first and matc flips uv0.y in every material
+          // (flipUV, on by default), so the UVs go in as they are.
+          math::Vector2d t = s->TexCoord(j);
+          math::Vector2d t1 = hasUv1 ? s->TexCoordBySet(j, 1u) : t;
+          uv[j] = {static_cast<float>(t.X()), static_cast<float>(t.Y()),
+                   static_cast<float>(t1.X()), static_cast<float>(t1.Y())};
+        }
+        else
+        {
+          uv[j] = {0.0f, 0.0f, 0.0f, 0.0f};
+        }
+      }
+
       // tangent frames (quaternions) from normals, or from geometry
       auto *tangents = new float4[nv];
       {
         filament::geometry::SurfaceOrientation::Builder builder;
         builder.vertexCount(nv);
         std::vector<float3> normals;
+        std::vector<float2> uv0;
         if (s->NormalCount() == nv)
         {
           normals.resize(nv);
@@ -211,6 +235,19 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
                           static_cast<float>(n.Z())};
           }
           builder.normals(normals.data());
+          // with UVs, tangents follow them (normal maps)
+          if (hasUv &&
+              type == filament::RenderableManager::PrimitiveType::TRIANGLES)
+          {
+            // (the builder takes packed UVs only)
+            uv0.resize(nv);
+            for (unsigned int j = 0; j < nv; ++j)
+              uv0[j] = uv[j].xy;
+            builder.uvs(uv0.data());
+            builder.positions(pos);
+            builder.triangleCount(ni / 3u);
+            builder.triangles(reinterpret_cast<const uint3 *>(idx));
+          }
         }
         else if (type == filament::RenderableManager::PrimitiveType::TRIANGLES)
         {
@@ -232,25 +269,6 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
           tangents[j] = {quats[j].x, quats[j].y, quats[j].z, quats[j].w};
       }
 
-      // texture coordinates (flip V: gz/Ogre are top-left, filament is GL)
-      auto *uv = new float2[nv];
-      const bool hasUv = s->TexCoordCount() == nv;
-      for (unsigned int j = 0; j < nv; ++j)
-      {
-        if (hasUv)
-        {
-          // gz UVs have a top-left origin (like Ogre). Textures are
-          // uploaded bottom row first and matc flips uv0.y in every material
-          // (flipUV, on by default), so the UVs go in as they are.
-          math::Vector2d t = s->TexCoord(j);
-          uv[j] = {static_cast<float>(t.X()), static_cast<float>(t.Y())};
-        }
-        else
-        {
-          uv[j] = {0.0f, 0.0f};
-        }
-      }
-
       using AT = filament::VertexBuffer::AttributeType;
       using VA = filament::VertexAttribute;
       geom->vb = filament::VertexBuffer::Builder()
@@ -258,14 +276,15 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
           .bufferCount(3)
           .attribute(VA::POSITION, 0, AT::FLOAT3)
           .attribute(VA::TANGENTS, 1, AT::FLOAT4)
-          .attribute(VA::UV0, 2, AT::FLOAT2)
+          .attribute(VA::UV0, 2, AT::FLOAT2, 0, sizeof(float4))
+          .attribute(VA::UV1, 2, AT::FLOAT2, sizeof(float2), sizeof(float4))
           .build(*engine);
       geom->vb->setBufferAt(*engine, 0, filament::VertexBuffer::BufferDescriptor(
           pos, sizeof(float3) * nv, &FreeBuffer<float3>));
       geom->vb->setBufferAt(*engine, 1, filament::VertexBuffer::BufferDescriptor(
           tangents, sizeof(float4) * nv, &FreeBuffer<float4>));
       geom->vb->setBufferAt(*engine, 2, filament::VertexBuffer::BufferDescriptor(
-          uv, sizeof(float2) * nv, &FreeBuffer<float2>));
+          uv, sizeof(float4) * nv, &FreeBuffer<float4>));
 
       geom->ib = filament::IndexBuffer::Builder()
           .indexCount(ni)
@@ -284,6 +303,7 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
     sub->geometry = geom;
     sub->mesh = _mesh.get();
     sub->index = prims.size();
+    sub->subMeshIndex = i;
 
     // material: from the imported mesh if any, else a default one
     MaterialPtr material;

@@ -25,6 +25,9 @@
 // PARITY_HEATSIG=1: adds heat signature objects (thermal outputs)
 // PARITY_CAPSULE=1: adds a tilted capsule, resized after it is attached
 // PARITY_TEXBOX=<png>: textured box in the RGB overview (texture orientation)
+// PARITY_PBR=1: PBR material row in the RGB overview (roughness, metal,
+// normal, emissive, light and environment maps, wireframe); PARITY_PBR=sky also
+// enables the sky
 // PARITY_WIDEANGLE=1: only the wide-angle camera geometry checks (RGB images,
 // per-object centroids, cutoff circle radius, Project3d), see WideAngle()
 // PARITY_PARTICLES=1: only particle statistics, with a particle emitter in
@@ -975,6 +978,98 @@ namespace
   }
 }
 
+/// \brief PARITY_PBR: a row of material samples across the RGB overview,
+/// spheres for the scalar parameters and boxes for the texture maps
+void AddPbrRow(ScenePtr _scene, bool _sky)
+{
+  const std::string tex = std::string(PROJECT_SOURCE_PATH) +
+      "/test/media/materials/textures/";
+  // procedural bumps: tangent space normals of h = 0.5 sin(kx) sin(ky)
+  const unsigned int n = 256;
+  std::vector<unsigned char> px(n * n * 3);
+  for (unsigned int y = 0; y < n; ++y)
+  {
+    for (unsigned int x = 0; x < n; ++x)
+    {
+      const double k = 8 * GZ_PI / n;
+      const double dx = 0.5 * k * n / 8 * std::cos(k * x) * std::sin(k * y);
+      const double dy = 0.5 * k * n / 8 * std::sin(k * x) * std::cos(k * y);
+      math::Vector3d nrm(-dx, -dy, 1);
+      nrm.Normalize();
+      unsigned char *p = &px[(y * n + x) * 3];
+      p[0] = static_cast<unsigned char>((nrm.X() * 0.5 + 0.5) * 255);
+      p[1] = static_cast<unsigned char>((nrm.Y() * 0.5 + 0.5) * 255);
+      p[2] = static_cast<unsigned char>((nrm.Z() * 0.5 + 0.5) * 255);
+    }
+  }
+  auto bumps = std::make_shared<common::Image>();
+  bumps->SetFromData(px.data(), n, n, common::Image::RGB_INT8);
+
+  struct Sample
+  {
+    bool box;
+    std::function<void(MaterialPtr)> set;
+    bool wireframe = false;
+  };
+  const std::vector<Sample> samples = {
+    // dielectric, rough 0.1 / 0.9
+    {false, [](MaterialPtr _m) {
+      _m->SetDiffuse(0.8, 0.1, 0.1); _m->SetRoughness(0.1f); }},
+    {false, [](MaterialPtr _m) {
+      _m->SetDiffuse(0.8, 0.1, 0.1); _m->SetRoughness(0.9f); }},
+    // gz-sim's default "gz-grey" (primitives without a material)
+    {false, [](MaterialPtr _m) {
+      _m->SetAmbient(0.3, 0.3, 0.3); _m->SetDiffuse(0.7, 0.7, 0.7);
+      _m->SetSpecular(1, 1, 1); _m->SetRoughness(0.2f);
+      _m->SetMetalness(1.0f); }},
+    // gold metal, roughness map
+    {true, [tex](MaterialPtr _m) {
+      _m->SetDiffuse(1.0, 0.75, 0.3); _m->SetMetalness(1.0f);
+      _m->SetRoughness(1.0f); _m->SetRoughnessMap(tex + "texture.png"); }},
+    // normal map
+    {true, [bumps](MaterialPtr _m) {
+      _m->SetDiffuse(0.7, 0.7, 0.7); _m->SetRoughness(0.4f);
+      _m->SetNormalMap("parity_bumps", bumps); }},
+    // emissive color
+    {false, [](MaterialPtr _m) {
+      _m->SetDiffuse(0.1, 0.1, 0.1); _m->SetEmissive(0.1, 0.9, 0.2); }},
+    // emissive map
+    {true, [tex](MaterialPtr _m) {
+      _m->SetDiffuse(0.1, 0.1, 0.1);
+      _m->SetEmissiveMap(tex + "texture.png"); }},
+    // light map (uv set 0), modulates the diffuse color
+    {true, [tex](MaterialPtr _m) {
+      _m->SetDiffuse(1.0, 1.0, 1.0);
+      _m->SetLightMap(tex + "texture.png", 0u); }},
+    // environment (reflection) map on a smooth metal
+    {false, [tex](MaterialPtr _m) {
+      _m->SetDiffuse(0.9, 0.9, 0.9); _m->SetMetalness(1.0f);
+      _m->SetRoughness(0.1f);
+      _m->SetEnvironmentMap(tex + "skybox_lowres.dds"); }},
+    // wireframe
+    {false, [](MaterialPtr _m) { _m->SetDiffuse(0.9, 0.9, 0.2); }, true},
+  };
+  // a row facing the overview camera, above the sensor scene
+  const double count = static_cast<double>(samples.size());
+  for (size_t i = 0; i < samples.size(); ++i)
+  {
+    const double t = (static_cast<double>(i) - (count - 1) / 2) * 0.65 - 0.4;
+    VisualPtr v = _scene->CreateVisual();
+    v->AddGeometry(samples[i].box ? _scene->CreateBox() :
+        _scene->CreateSphere());
+    v->SetLocalPose({-4.5 + t * 0.7071, 4.5 + t * 0.7071, 2.6,
+        0, 0, -GZ_PI / 4});
+    v->SetLocalScale(0.6, 0.6, 0.6);
+    MaterialPtr m = _scene->CreateMaterial();
+    samples[i].set(m);
+    v->SetMaterial(m);
+    v->SetWireframe(samples[i].wireframe);
+    _scene->RootVisual()->AddChild(v);
+  }
+  if (_sky)
+    _scene->SetSkyEnabled(true);
+}
+
 int main(int _argc, char **_argv)
 {
   if (_argc < 3)
@@ -1038,6 +1133,8 @@ int main(int _argc, char **_argv)
       v->SetMaterial(m);
       scene->RootVisual()->AddChild(v);
     }
+    if (const char *pbr = std::getenv("PARITY_PBR"))
+      AddPbrRow(scene, std::string(pbr) == "sky");
     CameraPtr cam = scene->CreateCamera("rgb");
     cam->SetLocalPose({-8, 8, 5, 0, 0.4, -GZ_PI / 4});
     cam->SetImageWidth(640);
