@@ -41,6 +41,7 @@
 #include <gz/rendering/RenderEngine.hh>
 #include <gz/rendering/RenderingIface.hh>
 #include <gz/rendering/Scene.hh>
+#include <gz/rendering/SegmentationCamera.hh>
 #include <gz/rendering/Visual.hh>
 
 using namespace gz;
@@ -48,6 +49,9 @@ using namespace rendering;
 
 namespace
 {
+  /// \brief Counter used to give every other object a segmentation label
+  int g_added = 0;
+
   void Add(ScenePtr _scene, GeometryPtr _geom, const math::Pose3d &_pose,
       const math::Vector3d &_scale)
   {
@@ -55,9 +59,21 @@ namespace
     v->AddGeometry(_geom);
     v->SetLocalPose(_pose);
     v->SetLocalScale(_scale);
+    // labels 1..3 on most objects, some left unlabeled (background)
+    if (g_added++ % 4 != 0)
+      v->SetUserData("label", 1 + g_added % 3);
     _scene->RootVisual()->AddChild(v);
   }
 
+  void Write(const std::string &_dir, const std::string &_name,
+      const float *_data, unsigned int _w, unsigned int _h, unsigned int _c,
+      std::ofstream &_index)
+  {
+    std::ofstream f(_dir + "/" + _name + ".f32", std::ios::binary);
+    f.write(reinterpret_cast<const char *>(_data),
+        static_cast<std::streamsize>(sizeof(float)) * _w * _h * _c);
+    _index << _name << " " << _w << " " << _h << " " << _c << "\n";
+  }
   void BuildScene(ScenePtr _scene)
   {
     // floor and a back wall (the wall sits inside every far clip)
@@ -81,17 +97,30 @@ namespace
         {0.05, 0.05, 2});
     Add(_scene, _scene->CreateBox(), {0.35, 0.3, 0.9, 0, 0, 0},
         {0.1, 0.1, 0.1});
+    // a two-link model: one panoptic instance spread over child visuals
+    VisualPtr model = _scene->CreateVisual("model");
+    model->SetLocalPosition(3, 0.8, 0);
+    for (int i = 0; i < 2; ++i)
+    {
+      VisualPtr link = _scene->CreateVisual();
+      link->AddGeometry(_scene->CreateBox());
+      link->SetLocalPosition(0, 0.5 * i, 0.3 + 0.6 * i);
+      link->SetLocalScale(0.4, 0.4, 0.6);
+      link->SetUserData("label", 7);
+      model->AddChild(link);
+    }
+    _scene->RootVisual()->AddChild(model);
   }
 
-  void Write(const std::string &_dir, const std::string &_name,
-      const float *_data, unsigned int _w, unsigned int _h, unsigned int _c,
+  void WriteBytes(const std::string &_dir, const std::string &_name,
+      const uint8_t *_data, unsigned int _w, unsigned int _h,
       std::ofstream &_index)
   {
-    std::ofstream f(_dir + "/" + _name + ".f32", std::ios::binary);
-    f.write(reinterpret_cast<const char *>(_data),
-        static_cast<std::streamsize>(sizeof(float)) * _w * _h * _c);
-    _index << _name << " " << _w << " " << _h << " " << _c << "\n";
+    std::vector<float> f(_data, _data + static_cast<size_t>(_w) * _h * 3);
+    Write(_dir, _name, f.data(), _w, _h, 3, _index);
   }
+
+
 
   /// \brief Median and p90 wall time of _frames calls, in ms
   std::pair<double, double> Time(const std::function<void()> &_f, int _frames)
@@ -181,6 +210,40 @@ int main(int _argc, char **_argv)
     // sensors stay alive: ogre2 asserts in DestroySensor on depth cameras
     dc.reset();
     pc.reset();
+  }
+
+  {
+    SegmentationCameraPtr seg = scene->CreateSegmentationCamera("seg");
+    seg->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+    seg->SetImageWidth(320);
+    seg->SetImageHeight(240);
+    seg->SetAspectRatio(320.0 / 240.0);
+    seg->SetHFOV(GZ_PI / 2);
+    seg->SetBackgroundLabel(23);
+    scene->RootVisual()->AddChild(seg);
+    std::vector<uint8_t> img(320 * 240 * 3), labels(img.size());
+    auto conn = seg->ConnectNewSegmentationFrame(
+        [&](const uint8_t *_d, unsigned int, unsigned int, unsigned int,
+            const std::string &) {
+          std::memcpy(img.data(), _d, img.size()); });
+    for (auto type : {SegmentationType::ST_SEMANTIC,
+                      SegmentationType::ST_PANOPTIC})
+    {
+      const std::string t =
+          type == SegmentationType::ST_SEMANTIC ? "sem" : "pan";
+      seg->SetSegmentationType(type);
+      seg->EnableColoredMap(false);
+      auto tm = Time([&] { seg->Update(); }, frames);
+      timing << "seg_" << t << " " << tm.first << " " << tm.second << "\n";
+      WriteBytes(dir, "seg_" + t, img.data(), 320, 240, index);
+      seg->EnableColoredMap(true);
+      seg->Update();
+      WriteBytes(dir, "seg_" + t + "_colored", img.data(), 320, 240, index);
+      seg->LabelMapFromColoredBuffer(labels.data());
+      WriteBytes(dir, "seg_" + t + "_fromcolored", labels.data(), 320, 240,
+          index);
+    }
+    conn.reset();
   }
 
   const std::vector<RaysCfg> raysCfgs = {

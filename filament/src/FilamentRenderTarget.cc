@@ -97,7 +97,8 @@ void FilamentRenderTarget::RebuildImpl()
       colorFormat = filament::Texture::InternalFormat::RGBA32F;
       break;
     default:
-      colorFormat = filament::Texture::InternalFormat::SRGB8_A8;
+      colorFormat = this->srgb ? filament::Texture::InternalFormat::SRGB8_A8
+                               : filament::Texture::InternalFormat::RGBA8;
       break;
   }
 
@@ -147,6 +148,15 @@ void FilamentRenderTarget::Render(filament::View *_view)
   _view->setRenderTarget(this->target);
   _view->setViewport({0, 0, this->width, this->height});
   renderer->renderStandaloneView(_view);
+}
+
+//////////////////////////////////////////////////
+void FilamentRenderTarget::SetSrgb(bool _srgb)
+{
+  if (this->srgb == _srgb)
+    return;
+  this->srgb = _srgb;
+  this->targetDirty = true;
 }
 
 //////////////////////////////////////////////////

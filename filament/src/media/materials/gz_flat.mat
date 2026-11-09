@@ -1,0 +1,19 @@
+// Flat color, no lighting: label colors for the segmentation camera. Meant
+// for a linear (non-sRGB) target with post-processing off, so the value is
+// written as is.
+material {
+    name : gz_flat,
+    shadingModel : unlit,
+    blending : opaque,
+    depthWrite : true,
+    parameters : [
+        { type : float3, name : color }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        material.baseColor = vec4(materialParams.color, 1.0);
+    }
+}

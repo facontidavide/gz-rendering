@@ -48,6 +48,20 @@ def main(ref_dir, test_dir):
         print(f"{name:<20}{ca.size:>8}{mism:>9}{d.max():>10.4f}"
               f"{np.percentile(d, 99):>10.4f}{np.percentile(d, 95):>10.4f}"
               f"{d.mean():>10.5f}{100.0 * (d > 0.01).mean():>8.2f}")
+        if name.startswith("seg_"):
+            # label images: report differing pixels; panoptic instance ids
+            # may legitimately be numbered differently, so also check that
+            # the two images are the same partition (a 1:1 relabelling)
+            ra = ref[name].reshape(-1, 3).astype(int)
+            rb = tst[name].reshape(-1, 3).astype(int)
+            diff = int((ra != rb).any(axis=1).sum())
+            ka = ra[:, 0] * 65536 + ra[:, 1] * 256 + ra[:, 2]
+            kb = rb[:, 0] * 65536 + rb[:, 1] * 256 + rb[:, 2]
+            pairs = set(zip(ka.tolist(), kb.tolist()))
+            same = (len(pairs) == len(set(ka.tolist())) ==
+                    len(set(kb.tolist())))
+            print(f"    differing pixels: {diff}, same partition: {same}, "
+                  f"segments: {len(set(ka.tolist()))}")
         if mism:
             pairs = {}
             for x, y in zip(ca.ravel(), cb.ravel()):

@@ -59,6 +59,10 @@ namespace gz
 
       public: filament::RenderTarget *Native() const;
 
+      /// \brief 8 bit formats are sRGB encoded by default (camera images);
+      /// false stores values as is (e.g. segmentation labels)
+      public: void SetSrgb(bool _srgb);
+
       protected: virtual void RebuildImpl() override;
 
       protected: void DestroyTarget();
@@ -70,6 +74,8 @@ namespace gz
       protected: filament::RenderTarget *target{nullptr};
 
       protected: filament::math::float4 clearColor{0.0f, 0.0f, 0.0f, 1.0f};
+
+      protected: bool srgb{true};
     };
 
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentRenderTexture :
