@@ -62,10 +62,10 @@ fragment {
         }
         if ((flags & 16) != 0) {
             // ogre2 puts the light map in the emissive slot, modulated by
-            // the diffuse color
+            // its diffuse term (the diffuse color over pi)
             highp vec2 luv = materialParams.lightMapUvSet == 1 ? getUV1() : uv;
             emissive = materialParams.emissiveMapTint * (1.0 - metallic) *
-                c.rgb * texture(materialParams_lightMap, luv).rgb;
+                c.rgb * (1.0 / PI) * texture(materialParams_lightMap, luv).rgb;
         }
         if ((flags & 32) != 0) {
             // reflection cube map (Ogre's PBSM_REFLECTION): prefiltered by
