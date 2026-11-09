@@ -71,6 +71,10 @@ namespace gz
       /// \brief Diffuse texture on the GPU, nullptr if none
       public: filament::Texture *FilamentTexture() const;
 
+      /// \brief Max anisotropy of the texture sampler: 1 like ogre2's
+      /// materials, 8 on heightmaps like Terra
+      public: float anisotropy{1.0f};
+
       protected: virtual void Init() override;
 
       protected: void Update(filament::MaterialInstance *_instance);

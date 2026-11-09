@@ -198,6 +198,7 @@ void FilamentMaterial::Update(filament::MaterialInstance *_instance)
       filament::TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
       filament::TextureSampler::MagFilter::LINEAR,
       filament::TextureSampler::WrapMode::REPEAT);
+  sampler.setAnisotropy(this->anisotropy);
   _instance->setParameter("baseColorMap", this->texture ? this->texture :
       FilamentRenderEngine::Instance()->Texture(""), sampler);
   if (_instance == this->lit)

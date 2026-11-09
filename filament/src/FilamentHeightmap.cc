@@ -27,6 +27,7 @@
 
 #include "gz/rendering/MeshDescriptor.hh"
 #include "gz/rendering/filament/FilamentHeightmap.hh"
+#include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
 #include "gz/rendering/filament/FilamentVisual.hh"
@@ -244,6 +245,8 @@ void FilamentHeightmap::Init()
   mat->SetDiffuse(1.0, 1.0, 1.0);
   // Terra is not in the shadow maps (it raymarches its own self shadows)
   mat->SetCastShadows(false);
+  // Terra samples with 8x anisotropy
+  std::dynamic_pointer_cast<FilamentMaterial>(mat)->anisotropy = 8.0f;
   if (!diffuse.empty())
     mat->SetTexture(diffuse);
 }
