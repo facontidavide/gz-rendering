@@ -162,14 +162,7 @@ FilamentSubMesh::~FilamentSubMesh()
 void FilamentSubMesh::Destroy()
 {
   BaseSubMesh::Destroy();
-  auto *engine = Engine();
-  if (engine)
-  {
-    if (this->vertexBuffer)
-      engine->destroy(this->vertexBuffer);
-    if (this->indexBuffer)
-      engine->destroy(this->indexBuffer);
-  }
+  this->geometry.reset();
   this->vertexBuffer = nullptr;
   this->indexBuffer = nullptr;
   this->mesh = nullptr;

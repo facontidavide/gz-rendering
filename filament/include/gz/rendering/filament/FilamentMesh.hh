@@ -17,6 +17,7 @@
 #ifndef GZ_RENDERING_FILAMENT_FILAMENTMESH_HH_
 #define GZ_RENDERING_FILAMENT_FILAMENTMESH_HH_
 
+#include <memory>
 #include <utils/Entity.h>
 
 #include "gz/rendering/config.hh"
@@ -105,6 +106,10 @@ namespace gz
       protected: filament::VertexBuffer *vertexBuffer{nullptr};
 
       protected: filament::IndexBuffer *indexBuffer{nullptr};
+
+      /// \brief Owns vertexBuffer / indexBuffer, which are shared by every
+      /// submesh built from the same common::SubMesh
+      protected: std::shared_ptr<void> geometry;
 
       /// \brief Instance currently bound on the GPU side
       protected: filament::MaterialInstance *bound{nullptr};

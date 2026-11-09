@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
+#include <memory>
 #include <vector>
 
 #include <filament/Box.h>
@@ -47,6 +49,38 @@ using namespace rendering;
 
 namespace
 {
+  /// \brief GPU buffers of one common::SubMesh, shared by all the
+  /// visuals that use it: one vertex array per distinct mesh instead of one
+  /// per visual is ~2.5 ms/frame at 2500 boxes (GL and Vulkan)
+  struct SharedGeometry
+  {
+    /// \brief Pins the source so its address (the cache key) is not reused
+    std::shared_ptr<common::SubMesh> source;
+    filament::VertexBuffer *vb{nullptr};
+    filament::IndexBuffer *ib{nullptr};
+    filament::math::float3 bmin;
+    filament::math::float3 bmax;
+    ~SharedGeometry()
+    {
+      auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+      if (engine)
+      {
+        engine->destroy(this->vb);
+        engine->destroy(this->ib);
+      }
+    }
+  };
+
+  // ponytail: keyed by SubMesh address, so editing a common::SubMesh in
+  // place after a visual was built from it is not picked up by later
+  // visuals; key on a content hash if that ever matters
+  std::map<const common::SubMesh *, std::weak_ptr<SharedGeometry>> &Cache()
+  {
+    static std::map<const common::SubMesh *,
+        std::weak_ptr<SharedGeometry>> cache;
+    return cache;
+  }
+
   using filament::math::float2;
   using filament::math::float3;
   using filament::math::float4;
@@ -135,104 +169,116 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
     if (nv == 0u || ni == 0u)
       continue;
 
-    // ponytail: centerSubMesh ignored (only used by some mesh viewers)
-    const math::Vector3d center = math::Vector3d::Zero;
-
-    // positions
-    auto *pos = new float3[nv];
-    for (unsigned int j = 0; j < nv; ++j)
+    std::shared_ptr<SharedGeometry> geom = Cache()[s.get()].lock();
+    if (!geom)
     {
-      math::Vector3d v = s->Vertex(j) - center;
-      pos[j] = {static_cast<float>(v.X()), static_cast<float>(v.Y()),
-                static_cast<float>(v.Z())};
-      bmin = min(bmin, pos[j]);
-      bmax = max(bmax, pos[j]);
-    }
+      geom = std::make_shared<SharedGeometry>();
+      geom->source = s;
+      geom->bmin = float3{std::numeric_limits<float>::max()};
+      geom->bmax = float3{std::numeric_limits<float>::lowest()};
+      // ponytail: centerSubMesh ignored (only used by some mesh viewers)
+      const math::Vector3d center = math::Vector3d::Zero;
 
-    // indices
-    auto *idx = new uint32_t[ni];
-    for (unsigned int j = 0; j < ni; ++j)
-      idx[j] = static_cast<uint32_t>(s->Index(j));
-
-    // tangent frames (quaternions) from normals, or from geometry
-    auto *tangents = new float4[nv];
-    {
-      filament::geometry::SurfaceOrientation::Builder builder;
-      builder.vertexCount(nv);
-      std::vector<float3> normals;
-      if (s->NormalCount() == nv)
-      {
-        normals.resize(nv);
-        for (unsigned int j = 0; j < nv; ++j)
-        {
-          math::Vector3d n = s->Normal(j);
-          normals[j] = {static_cast<float>(n.X()), static_cast<float>(n.Y()),
-                        static_cast<float>(n.Z())};
-        }
-        builder.normals(normals.data());
-      }
-      else if (type == filament::RenderableManager::PrimitiveType::TRIANGLES)
-      {
-        builder.positions(pos);
-        builder.triangleCount(ni / 3u);
-        builder.triangles(reinterpret_cast<const uint3 *>(idx));
-      }
-      else
-      {
-        // lines/points: an arbitrary frame is fine
-        normals.assign(nv, float3{0.0f, 0.0f, 1.0f});
-        builder.normals(normals.data());
-      }
-      auto *orientation = builder.build();
-      std::vector<quatf> quats(nv);
-      orientation->getQuats(quats.data(), nv);
-      delete orientation;
+      // positions
+      auto *pos = new float3[nv];
       for (unsigned int j = 0; j < nv; ++j)
-        tangents[j] = {quats[j].x, quats[j].y, quats[j].z, quats[j].w};
-    }
-
-    // texture coordinates (flip V: gz/Ogre are top-left, filament is GL)
-    auto *uv = new float2[nv];
-    const bool hasUv = s->TexCoordCount() == nv;
-    for (unsigned int j = 0; j < nv; ++j)
-    {
-      if (hasUv)
       {
-        math::Vector2d t = s->TexCoord(j);
-        uv[j] = {static_cast<float>(t.X()), 1.0f - static_cast<float>(t.Y())};
+        math::Vector3d v = s->Vertex(j) - center;
+        pos[j] = {static_cast<float>(v.X()), static_cast<float>(v.Y()),
+                  static_cast<float>(v.Z())};
+        geom->bmin = min(geom->bmin, pos[j]);
+        geom->bmax = max(geom->bmax, pos[j]);
       }
-      else
+
+      // indices
+      auto *idx = new uint32_t[ni];
+      for (unsigned int j = 0; j < ni; ++j)
+        idx[j] = static_cast<uint32_t>(s->Index(j));
+
+      // tangent frames (quaternions) from normals, or from geometry
+      auto *tangents = new float4[nv];
       {
-        uv[j] = {0.0f, 0.0f};
+        filament::geometry::SurfaceOrientation::Builder builder;
+        builder.vertexCount(nv);
+        std::vector<float3> normals;
+        if (s->NormalCount() == nv)
+        {
+          normals.resize(nv);
+          for (unsigned int j = 0; j < nv; ++j)
+          {
+            math::Vector3d n = s->Normal(j);
+            normals[j] = {static_cast<float>(n.X()), static_cast<float>(n.Y()),
+                          static_cast<float>(n.Z())};
+          }
+          builder.normals(normals.data());
+        }
+        else if (type == filament::RenderableManager::PrimitiveType::TRIANGLES)
+        {
+          builder.positions(pos);
+          builder.triangleCount(ni / 3u);
+          builder.triangles(reinterpret_cast<const uint3 *>(idx));
+        }
+        else
+        {
+          // lines/points: an arbitrary frame is fine
+          normals.assign(nv, float3{0.0f, 0.0f, 1.0f});
+          builder.normals(normals.data());
+        }
+        auto *orientation = builder.build();
+        std::vector<quatf> quats(nv);
+        orientation->getQuats(quats.data(), nv);
+        delete orientation;
+        for (unsigned int j = 0; j < nv; ++j)
+          tangents[j] = {quats[j].x, quats[j].y, quats[j].z, quats[j].w};
       }
+
+      // texture coordinates (flip V: gz/Ogre are top-left, filament is GL)
+      auto *uv = new float2[nv];
+      const bool hasUv = s->TexCoordCount() == nv;
+      for (unsigned int j = 0; j < nv; ++j)
+      {
+        if (hasUv)
+        {
+          math::Vector2d t = s->TexCoord(j);
+          uv[j] = {static_cast<float>(t.X()), 1.0f - static_cast<float>(t.Y())};
+        }
+        else
+        {
+          uv[j] = {0.0f, 0.0f};
+        }
+      }
+
+      using AT = filament::VertexBuffer::AttributeType;
+      using VA = filament::VertexAttribute;
+      geom->vb = filament::VertexBuffer::Builder()
+          .vertexCount(nv)
+          .bufferCount(3)
+          .attribute(VA::POSITION, 0, AT::FLOAT3)
+          .attribute(VA::TANGENTS, 1, AT::FLOAT4)
+          .attribute(VA::UV0, 2, AT::FLOAT2)
+          .build(*engine);
+      geom->vb->setBufferAt(*engine, 0, filament::VertexBuffer::BufferDescriptor(
+          pos, sizeof(float3) * nv, &FreeBuffer<float3>));
+      geom->vb->setBufferAt(*engine, 1, filament::VertexBuffer::BufferDescriptor(
+          tangents, sizeof(float4) * nv, &FreeBuffer<float4>));
+      geom->vb->setBufferAt(*engine, 2, filament::VertexBuffer::BufferDescriptor(
+          uv, sizeof(float2) * nv, &FreeBuffer<float2>));
+
+      geom->ib = filament::IndexBuffer::Builder()
+          .indexCount(ni)
+          .bufferType(filament::IndexBuffer::IndexType::UINT)
+          .build(*engine);
+      geom->ib->setBuffer(*engine, filament::IndexBuffer::BufferDescriptor(
+          idx, sizeof(uint32_t) * ni, &FreeBuffer<uint32_t>));
+      Cache()[s.get()] = geom;
     }
-
-    using AT = filament::VertexBuffer::AttributeType;
-    using VA = filament::VertexAttribute;
-    auto *vb = filament::VertexBuffer::Builder()
-        .vertexCount(nv)
-        .bufferCount(3)
-        .attribute(VA::POSITION, 0, AT::FLOAT3)
-        .attribute(VA::TANGENTS, 1, AT::FLOAT4)
-        .attribute(VA::UV0, 2, AT::FLOAT2)
-        .build(*engine);
-    vb->setBufferAt(*engine, 0, filament::VertexBuffer::BufferDescriptor(
-        pos, sizeof(float3) * nv, &FreeBuffer<float3>));
-    vb->setBufferAt(*engine, 1, filament::VertexBuffer::BufferDescriptor(
-        tangents, sizeof(float4) * nv, &FreeBuffer<float4>));
-    vb->setBufferAt(*engine, 2, filament::VertexBuffer::BufferDescriptor(
-        uv, sizeof(float2) * nv, &FreeBuffer<float2>));
-
-    auto *ib = filament::IndexBuffer::Builder()
-        .indexCount(ni)
-        .bufferType(filament::IndexBuffer::IndexType::UINT)
-        .build(*engine);
-    ib->setBuffer(*engine, filament::IndexBuffer::BufferDescriptor(
-        idx, sizeof(uint32_t) * ni, &FreeBuffer<uint32_t>));
+    bmin = min(bmin, geom->bmin);
+    bmax = max(bmax, geom->bmax);
 
     FilamentSubMeshPtr sub(new FilamentSubMesh);
-    sub->vertexBuffer = vb;
-    sub->indexBuffer = ib;
+    sub->vertexBuffer = geom->vb;
+    sub->indexBuffer = geom->ib;
+    sub->geometry = geom;
     sub->mesh = _mesh.get();
     sub->index = prims.size();
 
