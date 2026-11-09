@@ -312,6 +312,10 @@ bool FilamentRenderEngine::InitImpl()
           << this->dataPtr->backend << ")" << std::endl;
     return false;
   }
+  // ponytail: spike knob to measure Filament's automatic instancing
+  // (batches primitives sharing geometry and MaterialInstance)
+  const char *autoInst = std::getenv("FIL_AUTOINSTANCE");
+  this->dataPtr->engine->setAutomaticInstancingEnabled(autoInst && *autoInst);
   this->dataPtr->renderer = this->dataPtr->engine->createRenderer();
   this->dataPtr->scenes = FilamentSceneStorePtr(new FilamentSceneStore);
 
