@@ -40,6 +40,7 @@
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentMeshFactory.hh"
 #include "gz/rendering/filament/FilamentParticleEmitter.hh"
+#include "gz/rendering/filament/FilamentRayQuery.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
@@ -457,10 +458,12 @@ RenderWindowPtr FilamentScene::CreateRenderWindowImpl(unsigned int,
 }
 
 //////////////////////////////////////////////////
-RayQueryPtr FilamentScene::CreateRayQueryImpl(unsigned int,
-    const std::string &)
+RayQueryPtr FilamentScene::CreateRayQueryImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto rayQuery = std::shared_ptr<FilamentRayQuery>(new FilamentRayQuery);
+  bool result = this->InitObject(rayQuery, _id, _name);
+  return (result) ? rayQuery : nullptr;
 }
 
 //////////////////////////////////////////////////

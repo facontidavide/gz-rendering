@@ -57,8 +57,8 @@ namespace gz
 
       public: virtual math::Color AmbientLight() const override;
 
-      /// \brief GPU picking through the camera.
-      /// ponytail: no RayQuery yet, so picking is camera-only
+      /// \brief GPU picking through the camera. FilamentRayQuery casts a
+      /// ray against the meshes instead.
       public: virtual VisualPtr VisualAt(const CameraPtr &_camera,
           const math::Vector2i &_mousePos) override;
 
