@@ -32,6 +32,7 @@ namespace gz
     class FilamentCamera;
     class FilamentDepthCamera;
     class FilamentGpuRays;
+    class FilamentBoundingBoxCamera;
     class FilamentSegmentationCamera;
     class FilamentThermalCamera;
     class FilamentDirectionalLight;
@@ -64,6 +65,7 @@ namespace gz
     typedef shared_ptr<FilamentCamera>             FilamentCameraPtr;
     typedef shared_ptr<FilamentDepthCamera>        FilamentDepthCameraPtr;
     typedef shared_ptr<FilamentGpuRays>            FilamentGpuRaysPtr;
+    typedef shared_ptr<FilamentBoundingBoxCamera>  FilamentBoundingBoxCameraPtr;
     typedef shared_ptr<FilamentSegmentationCamera> FilamentSegmentationCameraPtr;
     typedef shared_ptr<FilamentThermalCamera>      FilamentThermalCameraPtr;
     typedef shared_ptr<FilamentDirectionalLight>   FilamentDirectionalLightPtr;

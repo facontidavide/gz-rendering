@@ -90,6 +90,9 @@ namespace gz
       protected: virtual ThermalCameraPtr CreateThermalCameraImpl(
                      unsigned int _id, const std::string &_name) override;
 
+      protected: virtual BoundingBoxCameraPtr CreateBoundingBoxCameraImpl(
+          unsigned int _id, const std::string &_name) override;
+
       protected: virtual SegmentationCameraPtr CreateSegmentationCameraImpl(
                      unsigned int _id, const std::string &_name) override;
 

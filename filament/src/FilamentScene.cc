@@ -25,6 +25,7 @@
 #include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
 #include "gz/rendering/filament/FilamentGpuRays.hh"
+#include "gz/rendering/filament/FilamentBoundingBoxCamera.hh"
 #include "gz/rendering/filament/FilamentSegmentationCamera.hh"
 #include "gz/rendering/filament/FilamentThermalCamera.hh"
 #include "gz/rendering/filament/FilamentLight.hh"
@@ -212,6 +213,15 @@ SegmentationCameraPtr FilamentScene::CreateSegmentationCameraImpl(
     unsigned int _id, const std::string &_name)
 {
   FilamentSegmentationCameraPtr camera(new FilamentSegmentationCamera);
+  bool result = this->InitObject(camera, _id, _name);
+  return (result) ? camera : nullptr;
+}
+
+//////////////////////////////////////////////////
+BoundingBoxCameraPtr FilamentScene::CreateBoundingBoxCameraImpl(
+    unsigned int _id, const std::string &_name)
+{
+  FilamentBoundingBoxCameraPtr camera(new FilamentBoundingBoxCamera);
   bool result = this->InitObject(camera, _id, _name);
   return (result) ? camera : nullptr;
 }

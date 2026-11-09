@@ -30,6 +30,9 @@ def main(ref_dir, test_dir):
           f"{'p99|d|':>10}{'p95|d|':>10}{'mean|d|':>10}{'>1cm%':>8}")
     for name in ref:
         a, b = ref[name], tst[name]
+        if name.startswith("bbox_"):
+            compare_boxes(name, a[..., 0], b[..., 0])
+            continue
         if name.endswith("_cloud"):
             a, b = a[..., :3], b[..., :3]
             # a point is finite when all of x, y, z are
@@ -71,6 +74,23 @@ def main(ref_dir, test_dir):
             print("    class ref->test: " + ", ".join(
                 f"{names[k[0]]}->{names[k[1]]}:{v}" for k, v in
                 sorted(pairs.items())))
+
+
+def compare_boxes(name, a, b):
+    """Rows: center xyz, size xyz, quaternion wxyz, label. Boxes are
+    matched in output order (both engines sort by model name)."""
+    print(f"{name:<20} boxes ref={len(a)} test={len(b)}", end="")
+    if len(a) != len(b) or len(a) == 0:
+        print("  COUNT/EMPTY MISMATCH")
+        return
+    labels = int((a[:, 10] != b[:, 10]).sum())
+    dc = np.abs(a[:, 0:3] - b[:, 0:3]).max()
+    ds = np.abs(a[:, 3:6] - b[:, 3:6]).max()
+    # rotation: angle between quaternions (sign independent)
+    dot = np.clip(np.abs((a[:, 6:10] * b[:, 6:10]).sum(1)), 0, 1)
+    dang = np.degrees(2 * np.arccos(dot)).max()
+    print(f"  label!={labels}  max|dcenter|={dc:.4f}  max|dsize|={ds:.4f}"
+          f"  max rot={dang:.3f}deg")
 
 
 if __name__ == "__main__":

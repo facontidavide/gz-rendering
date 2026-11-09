@@ -41,6 +41,7 @@
 #include <gz/common/MeshManager.hh>
 #include <gz/math/Pose3.hh>
 
+#include <gz/rendering/BoundingBoxCamera.hh>
 #include <gz/rendering/DepthCamera.hh>
 #include <gz/rendering/GpuRays.hh>
 #include <gz/rendering/RenderEngine.hh>
@@ -288,6 +289,46 @@ int main(int _argc, char **_argv)
       seg->LabelMapFromColoredBuffer(labels.data());
       WriteBytes(dir, "seg_" + t + "_fromcolored", labels.data(), 320, 240,
           index);
+    }
+    conn.reset();
+  }
+
+  {
+    BoundingBoxCameraPtr bb = scene->CreateBoundingBoxCamera("bbox");
+    bb->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+    bb->SetImageWidth(320);
+    bb->SetImageHeight(240);
+    bb->SetAspectRatio(320.0 / 240.0);
+    bb->SetHFOV(GZ_PI / 2);
+    scene->RootVisual()->AddChild(bb);
+    std::vector<BoundingBox> boxes;
+    auto conn = bb->ConnectNewBoundingBoxes(
+        [&](const std::vector<BoundingBox> &_b) { boxes = _b; });
+    for (auto type : {BoundingBoxType::BBT_VISIBLEBOX2D,
+                      BoundingBoxType::BBT_FULLBOX2D,
+                      BoundingBoxType::BBT_BOX3D})
+    {
+      const std::string t = type == BoundingBoxType::BBT_VISIBLEBOX2D ?
+          "visible2d" : type == BoundingBoxType::BBT_FULLBOX2D ? "full2d" :
+          "box3d";
+      bb->SetBoundingBoxType(type);
+      auto tm = Time([&] { bb->Update(); }, frames);
+      timing << "bbox_" << t << " " << tm.first << " " << tm.second << "\n";
+      // one row per box: center xyz, size xyz, rotation wxyz, label
+      std::vector<float> rows;
+      for (const BoundingBox &b : boxes)
+      {
+        const math::Quaterniond q = b.Orientation();
+        for (double v : {b.Center().X(), b.Center().Y(), b.Center().Z(),
+             b.Size().X(), b.Size().Y(), b.Size().Z(), q.W(), q.X(), q.Y(),
+             q.Z(), static_cast<double>(b.Label())})
+          rows.push_back(static_cast<float>(v));
+      }
+      Write(dir, "bbox_" + t, rows.data(), 11, boxes.size(), 1, index);
+      std::vector<uint8_t> img(320 * 240 * 3, 0);
+      for (const BoundingBox &b : boxes)
+        bb->DrawBoundingBox(img.data(), math::Color::Green, b);
+      WriteBytes(dir, "bboxdraw_" + t, img.data(), 320, 240, index);
     }
     conn.reset();
   }
