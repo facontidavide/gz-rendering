@@ -71,6 +71,14 @@ namespace gz
       // Documentation inherited.
       public: virtual bool SkyEnabled() const override;
 
+      // Documentation inherited. Only directional lights, like ogre2.
+      public: virtual bool SetShadowTextureSize(LightType _lightType,
+          unsigned int _textureSize) override;
+
+      // Documentation inherited.
+      public: virtual unsigned int ShadowTextureSize(
+          LightType _lightType) const override;
+
       /// \brief Native filament scene
       public: filament::Scene *Native() const;
 
@@ -241,6 +249,9 @@ namespace gz
       protected: filament::Skybox *skybox{nullptr};
 
       protected: math::Color ambient;
+
+      /// \brief Shadow map size of the directional lights
+      protected: unsigned int dirTexSize{2048u};
 
       protected: FilamentVisualPtr rootVisual;
 

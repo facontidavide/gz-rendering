@@ -182,12 +182,12 @@ void FilamentLight::Init()
   // splits with lambda 0.95. Filament's default (one 1024 map over the
   // whole view) blurs thin casters into nothing a few metres away.
   // ponytail: splits computed for a 0.1..100 m camera; Filament takes them
-  // per light, not per camera. Scene::SetShadowTextureSize not wired up.
+  // per light, not per camera. Map size: Scene::ShadowTextureSize.
   filament::LightManager::ShadowOptions shadows;
   if (this->type == filament::LightManager::Type::DIRECTIONAL ||
       this->type == filament::LightManager::Type::SUN)
   {
-    shadows.mapSize = 2048u;
+    shadows.mapSize = this->scene->ShadowTextureSize(LightType::DIRECTIONAL);
     shadows.shadowCascades = 3u;
     filament::LightManager::ShadowCascades::computePracticalSplits(
         shadows.cascadeSplitPositions, 3u, 0.1f, 100.0f, 0.95f);
@@ -198,6 +198,20 @@ void FilamentLight::Init()
       .build(*engine, this->entity);
   this->scene->Native()->addEntity(this->entity);
   this->UpdateLight();
+}
+
+//////////////////////////////////////////////////
+void FilamentLight::SetShadowMapSize(unsigned int _size)
+{
+  if ((this->type != filament::LightManager::Type::DIRECTIONAL &&
+       this->type != filament::LightManager::Type::SUN) ||
+      this->entity.isNull() || !Lights().hasComponent(this->entity))
+    return;
+  auto &lm = Lights();
+  auto inst = lm.getInstance(this->entity);
+  auto shadows = lm.getShadowOptions(inst);
+  shadows.mapSize = _size;
+  lm.setShadowOptions(inst, shadows);
 }
 
 //////////////////////////////////////////////////

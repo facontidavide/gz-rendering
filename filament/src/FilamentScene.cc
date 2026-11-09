@@ -21,8 +21,10 @@
 #include <filament/IndirectLight.h>
 #include <filament/Scene.h>
 #include <filament/Skybox.h>
+#include <filament/Texture.h>
 
 #include <gz/common/Console.hh>
+#include <gz/math/Helpers.hh>
 
 #include "gz/rendering/filament/FilamentArrowVisual.hh"
 #include "gz/rendering/filament/FilamentAxisVisual.hh"
@@ -196,6 +198,64 @@ void FilamentScene::SetSkyEnabled(bool _enabled)
 bool FilamentScene::SkyEnabled() const
 {
   return this->scene && this->scene->getSkybox();
+}
+
+//////////////////////////////////////////////////
+bool FilamentScene::SetShadowTextureSize(LightType _lightType,
+    unsigned int _textureSize)
+{
+  // same validation as Ogre2Scene
+  if (_lightType != LightType::DIRECTIONAL)
+  {
+    gzerr << "Light type [" << static_cast<int>(_lightType)
+          << "] is not supported." << std::endl;
+    return false;
+  }
+  constexpr unsigned int kMaxTexSize = 16384u;
+  const unsigned int maxTexSize = std::min<size_t>(kMaxTexSize,
+      filament::Texture::getMaxTextureSize(
+          *FilamentRenderEngine::Instance()->FilamentEngine(),
+          filament::Texture::Sampler::SAMPLER_2D));
+  if (_textureSize > maxTexSize)
+  {
+    gzerr << "<texture_size> of '" << _textureSize
+          << "' exceeds maximum possible texture size of " << maxTexSize
+          << ", using default texture size" << std::endl;
+    return false;
+  }
+  if (_textureSize < 512u || !math::isPowerOfTwo(_textureSize))
+  {
+    gzerr << "<texture_size> of '" << _textureSize
+          << "' is not a valid texture size,"
+          << " using default texture size" << std::endl;
+    return false;
+  }
+  this->dirTexSize = _textureSize;
+  for (unsigned int i = 0; i < this->lights->Size(); ++i)
+  {
+    if (auto light = std::dynamic_pointer_cast<FilamentLight>(
+        this->lights->GetByIndex(i)))
+      light->SetShadowMapSize(_textureSize);
+  }
+  return true;
+}
+
+//////////////////////////////////////////////////
+unsigned int FilamentScene::ShadowTextureSize(LightType _lightType) const
+{
+  switch (_lightType)
+  {
+    case LightType::DIRECTIONAL:
+      return this->dirTexSize;
+    case LightType::SPOT:
+    case LightType::POINT:
+      // not configurable, like ogre2
+      return 2048u;
+    default:
+      gzerr << "Invalid light type [" << static_cast<int>(_lightType) << "]"
+            << std::endl;
+      return 0u;
+  }
 }
 
 //////////////////////////////////////////////////
