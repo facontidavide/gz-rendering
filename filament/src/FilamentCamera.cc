@@ -15,6 +15,8 @@
  *
  */
 
+#include <cstdlib>
+
 #include <filament/Camera.h>
 #include <filament/Engine.h>
 #include <filament/Scene.h>
@@ -108,7 +110,9 @@ void FilamentCamera::Init()
   this->view->setVisibleLayers(0xff, 0x1);
   // Sensors want plain radiance: no tone mapping, AA, dithering, bloom...
   this->view->setPostProcessingEnabled(false);
-  this->view->setShadowingEnabled(true);
+  // ponytail: FIL_NOSHADOW=1 is a spike benchmarking knob, drop before merge
+  const char *noShadow = std::getenv("FIL_NOSHADOW");
+  this->view->setShadowingEnabled(!(noShadow && *noShadow));
 
   this->CreateRenderTexture();
   this->Reset();

@@ -278,6 +278,16 @@ bool FilamentRenderEngine::InitImpl()
   this->dataPtr->engine = filament::Engine::Builder()
       .backend(backend)
       .build();
+  if (!this->dataPtr->engine && backend == filament::Engine::Backend::VULKAN)
+  {
+    // e.g. no Vulkan loader or ICD on this machine
+    gzwarn << "Filament Vulkan backend unavailable, falling back to OpenGL"
+           << std::endl;
+    this->dataPtr->backend = "opengl";
+    this->dataPtr->engine = filament::Engine::Builder()
+        .backend(filament::Engine::Backend::OPENGL)
+        .build();
+  }
   if (!this->dataPtr->engine)
   {
     gzerr << "Failed to create filament engine (backend: "

@@ -15,6 +15,8 @@
  *
  */
 
+#include <algorithm>
+
 #include <filament/Engine.h>
 #include <filament/LightManager.h>
 #include <filament/Scene.h>
@@ -206,7 +208,17 @@ void FilamentLight::UpdateLight()
   }
   else
   {
-    lm.setIntensityCandela(inst, power);
+    // gz/ogre2 attenuate as 1 / (c + l*d + q*d^2) (default: no falloff at
+    // all); filament lights are physical, 1/d^2. Match the two at a
+    // reference distance.
+    // ponytail: single matching distance; brighter than ogre2 closer to the
+    // light, darker farther. An exact match needs a custom light model.
+    constexpr double kRefDist = 5.0;
+    const double atten = this->attenConstant + this->attenLinear * kRefDist +
+        this->attenQuadratic * kRefDist * kRefDist;
+    const double candela = power * kRefDist * kRefDist /
+        std::max(atten, 1e-6);
+    lm.setIntensityCandela(inst, static_cast<float>(candela));
     lm.setFalloff(inst, static_cast<float>(this->attenRange));
   }
 }

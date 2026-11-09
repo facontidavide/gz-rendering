@@ -17,6 +17,7 @@
 #ifndef GZ_RENDERING_FILAMENT_FILAMENTMATERIAL_HH_
 #define GZ_RENDERING_FILAMENT_FILAMENTMATERIAL_HH_
 
+#include <array>
 #include <string>
 
 #include "gz/rendering/config.hh"
@@ -80,6 +81,14 @@ namespace gz
       protected: std::string loadedTexture;
 
       protected: std::string textureName;
+
+      /// \brief Last values pushed to the instances, to skip redundant
+      /// uniform uploads
+      protected: bool pushed{false};
+
+      protected: std::array<float, 11> pushedKey{};
+
+      protected: filament::Texture *pushedTexture{nullptr};
 
       protected: std::shared_ptr<const common::Image> textureData;
 

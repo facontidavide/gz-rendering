@@ -19,7 +19,9 @@
 // frame and prints a few depth-camera samples. Usage:
 //   filament_smoke <engine> [out_prefix] [frames]
 
+#include <algorithm>
 #include <chrono>
+#include <vector>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -160,7 +162,7 @@ int main(int _argc, char **_argv)
   const int frames = _argc > 3 ? std::atoi(_argv[3]) : 20;
 
   std::map<std::string, std::string> params;
-  if (_argc > 4)
+  if (_argc > 4 && std::string(_argv[4]) != "-")
     params[_argv[4]] = "1";
   RenderEngine *engine = rendering::engine(engineName, params);
   if (!engine)
@@ -170,6 +172,24 @@ int main(int _argc, char **_argv)
   }
   ScenePtr scene = engine->CreateScene("scene");
   BuildScene(scene);
+  // optional grid of extra boxes behind the demo objects, to see how the
+  // per-frame cost scales with object count
+  const int extra = _argc > 5 ? std::atoi(_argv[5]) : 0;
+  {
+    MaterialPtr gray = scene->CreateMaterial();
+    gray->SetDiffuse(0.6, 0.6, 0.6);
+    const int side = static_cast<int>(std::ceil(std::sqrt(extra)));
+    for (int i = 0; i < extra; ++i)
+    {
+      VisualPtr v = scene->CreateVisual();
+      v->AddGeometry(scene->CreateBox());
+      v->SetLocalScale(0.15, 0.15, 0.15);
+      v->SetLocalPosition(6 + 0.25 * (i / side), -0.25 * side / 2.0 +
+          0.25 * (i % side), 0.5);
+      v->SetMaterial(gray);
+      scene->RootVisual()->AddChild(v);
+    }
+  }
   VisualPtr root = scene->RootVisual();
 
   // RGB camera
@@ -227,21 +247,29 @@ int main(int _argc, char **_argv)
   depth->Update();
   std::cout << "depth frames: " << depthFrames << std::endl;
 
-  // Timing: RGB capture and depth update loops
+  // Timing: warm up, then per-frame times for RGB capture and depth update
   {
-    auto t0 = std::chrono::steady_clock::now();
-    for (int i = 0; i < frames; ++i)
-      camera->Capture(image);
-    auto t1 = std::chrono::steady_clock::now();
-    for (int i = 0; i < frames; ++i)
-      depth->Update();
-    auto t2 = std::chrono::steady_clock::now();
-    auto ms = [](auto a, auto b) {
-      return std::chrono::duration<double, std::milli>(b - a).count();
+    using Clock = std::chrono::steady_clock;
+    auto measure = [&](auto &&_fn)
+    {
+      for (int i = 0; i < 10; ++i)
+        _fn();
+      std::vector<double> t;
+      for (int i = 0; i < frames; ++i)
+      {
+        const auto a = Clock::now();
+        _fn();
+        t.push_back(std::chrono::duration<double, std::milli>(
+            Clock::now() - a).count());
+      }
+      std::sort(t.begin(), t.end());
+      return std::make_pair(t[t.size() / 2], t[t.size() * 9 / 10]);
     };
-    std::cout << "timing: rgb 640x480 capture " << ms(t0, t1) / frames
-              << " ms/frame, depth 320x240 update " << ms(t1, t2) / frames
-              << " ms/frame (" << frames << " frames)" << std::endl;
+    const auto rgb = measure([&]{ camera->Capture(image); });
+    const auto dep = measure([&]{ depth->Update(); });
+    std::cout << "timing (" << frames << " frames, median/p90 ms): rgb 640x480 "
+              << rgb.first << "/" << rgb.second << ", depth 320x240 "
+              << dep.first << "/" << dep.second << std::endl;
   }
 
   // Save a depth preview (normalized to [near, far])

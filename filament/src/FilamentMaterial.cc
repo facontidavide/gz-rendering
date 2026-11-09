@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include <filament/Engine.h>
@@ -142,8 +143,24 @@ void FilamentMaterial::PreRender()
     this->loadedTexture.clear();
   }
 
+  // Pushing parameters dirties the instance's uniform buffer, which filament
+  // then re-uploads: only do it when something changed.
+  const math::Color d = this->Diffuse();
+  const math::Color s = this->Specular();
+  const std::array<float, 11> key = {d.R(), d.G(), d.B(),
+      static_cast<float>(this->Transparency()), s.R(), s.G(), s.B(),
+      this->Roughness(), this->Metalness(),
+      this->LightingEnabled() ? 1.0f : 0.0f, 0.0f};
+  if (this->pushed && key == this->pushedKey &&
+      this->texture == this->pushedTexture)
+  {
+    return;
+  }
   this->Update(this->lit);
   this->Update(this->unlit);
+  this->pushed = true;
+  this->pushedKey = key;
+  this->pushedTexture = this->texture;
 }
 
 //////////////////////////////////////////////////
