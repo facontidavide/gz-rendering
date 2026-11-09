@@ -79,6 +79,11 @@ namespace gz
 
       protected: std::vector<float> pointCloud;
 
+      /// \brief Readback buffers (depth pass, color pass), reused
+      protected: std::vector<float> depthRaw;
+
+      protected: std::vector<unsigned char> colorRaw;
+
       protected: common::EventT<void(const float *, unsigned int,
           unsigned int, unsigned int, const std::string &)> newDepthFrame;
 

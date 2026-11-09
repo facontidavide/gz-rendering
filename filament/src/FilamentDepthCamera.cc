@@ -19,10 +19,12 @@
 #include <cstring>
 #include <limits>
 
+#include <backend/PixelBufferDescriptor.h>
 #include <filament/Camera.h>
 #include <filament/Engine.h>
 #include <filament/Material.h>
 #include <filament/MaterialInstance.h>
+#include <filament/Renderer.h>
 #include <filament/View.h>
 
 #include <gz/common/Console.hh>
@@ -165,19 +167,27 @@ void FilamentDepthCamera::PostRender()
   const size_t len = static_cast<size_t>(width) * height;
   this->depthImage.resize(len);
 
-  Image img(width, height, PF_FLOAT32_R);
-  this->renderTexture->Copy(img);
-  const float *src = img.Data<float>();
-
+  // queue both readbacks, wait once (rows come back top row first, the
+  // gz image layout)
   const bool wantCloud = this->newRgbPointCloud.ConnectionCount() > 0u;
+  auto *renderer = FilamentRenderEngine::Instance()->Renderer();
+  this->depthRaw.resize(len);
+  renderer->readPixels(this->renderTexture->Native(), 0, 0, width, height,
+      filament::backend::PixelBufferDescriptor(this->depthRaw.data(),
+      len * sizeof(float), filament::backend::PixelDataFormat::R,
+      filament::backend::PixelDataType::FLOAT));
   const unsigned char *rgba = nullptr;
-  Image colorImg;
   if (wantCloud && this->colorTexture)
   {
-    colorImg = Image(width, height, PF_R8G8B8A8);
-    this->colorTexture->Copy(colorImg);
-    rgba = colorImg.Data<unsigned char>();
+    this->colorRaw.resize(len * 4u);
+    renderer->readPixels(this->colorTexture->Native(), 0, 0, width, height,
+        filament::backend::PixelBufferDescriptor(this->colorRaw.data(),
+        this->colorRaw.size(), filament::backend::PixelDataFormat::RGBA,
+        filament::backend::PixelDataType::UBYTE));
+    rgba = this->colorRaw.data();
   }
+  FilamentRenderEngine::Instance()->FilamentEngine()->flushAndWait();
+  const float *src = this->depthRaw.data();
   if (wantCloud)
     this->pointCloud.resize(len * 4u);
 
@@ -191,7 +201,14 @@ void FilamentDepthCamera::PostRender()
   const double fx = (width * 0.5) / std::tan(this->HFOV().Radian() * 0.5);
   const double cx = width * 0.5;
   const double cy = height * 0.5;
+  // ogre2 also writes the background color for clamped points; it
+  // gamma-encodes it, the color pass target here is sRGB as well
   const math::Color bg = this->scene->BackgroundColor();
+  const uint32_t bgPacked =
+      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.R()) * 255.0)) << 24u) |
+      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.G()) * 255.0)) << 16u) |
+      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.B()) * 255.0)) << 8u) |
+      255u;
   for (unsigned int v = 0; v < height; ++v)
   {
     for (unsigned int u = 0; u < width; ++u)
@@ -220,20 +237,10 @@ void FilamentDepthCamera::PostRender()
       out[0] = static_cast<float>(p[0]);
       out[1] = static_cast<float>(p[1]);
       out[2] = static_cast<float>(p[2]);
-      uint32_t r, g, b;
-      if (clamped || !rgba)
-      {
-        // ogre2 also writes the background color for clamped points; it
-        // gamma-encodes it, the color pass target here is sRGB as well
-        r = static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.R()) * 255.0));
-        g = static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.G()) * 255.0));
-        b = static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.B()) * 255.0));
-      }
-      else
-      {
-        r = rgba[i * 4u]; g = rgba[i * 4u + 1u]; b = rgba[i * 4u + 2u];
-      }
-      const uint32_t packed = (r << 24u) | (g << 16u) | (b << 8u) | 255u;
+      const uint32_t packed = (clamped || !rgba) ? bgPacked :
+          (static_cast<uint32_t>(rgba[i * 4u]) << 24u) |
+          (static_cast<uint32_t>(rgba[i * 4u + 1u]) << 16u) |
+          (static_cast<uint32_t>(rgba[i * 4u + 2u]) << 8u) | 255u;
       std::memcpy(&out[3], &packed, sizeof(float));
     }
   }
