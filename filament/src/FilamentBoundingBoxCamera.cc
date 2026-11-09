@@ -320,7 +320,7 @@ void FilamentBoundingBoxCamera::Render()
   const float bg = kBackgroundLabel / 255.0f;
   this->renderTexture->SetClearColor({bg, bg, bg, 1.0f});
   this->view->setVisibleLayers(0xff,
-      FilamentConversions::ToLayers(this->VisibilityMask()));
+      FilamentConversions::ToSensorLayers(this->VisibilityMask()));
 
   // Items in creation order, like ogre ids. Each one is drawn with
   // R = index % 256, G = index / 256, B = label.

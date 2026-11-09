@@ -84,6 +84,9 @@ namespace gz
 
       protected: std::vector<unsigned char> colorRaw;
 
+      /// \brief Half resolution particle depth, reused
+      protected: std::vector<float> particleDepth;
+
       protected: common::EventT<void(const float *, unsigned int,
           unsigned int, unsigned int, const std::string &)> newDepthFrame;
 

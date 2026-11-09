@@ -15,6 +15,8 @@
  *
  */
 
+#include <algorithm>
+
 #include <filament/Engine.h>
 #include <filament/IndirectLight.h>
 #include <filament/Scene.h>
@@ -34,6 +36,7 @@
 #include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentMeshFactory.hh"
+#include "gz/rendering/filament/FilamentParticleEmitter.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
@@ -154,6 +157,36 @@ void FilamentScene::RegisterMesh(FilamentMesh *_mesh)
 void FilamentScene::UnregisterMesh(FilamentMesh *_mesh)
 {
   this->meshes.erase(_mesh);
+}
+
+//////////////////////////////////////////////////
+const std::vector<FilamentParticleEmitter *> &
+    FilamentScene::ParticleEmitters() const
+{
+  return this->particleEmitters;
+}
+
+//////////////////////////////////////////////////
+void FilamentScene::RegisterParticleEmitter(FilamentParticleEmitter *_emitter)
+{
+  this->particleEmitters.push_back(_emitter);
+}
+
+//////////////////////////////////////////////////
+void FilamentScene::UnregisterParticleEmitter(
+    FilamentParticleEmitter *_emitter)
+{
+  auto &v = this->particleEmitters;
+  v.erase(std::remove(v.begin(), v.end(), _emitter), v.end());
+}
+
+//////////////////////////////////////////////////
+ParticleEmitterPtr FilamentScene::CreateParticleEmitterImpl(unsigned int _id,
+    const std::string &_name)
+{
+  FilamentParticleEmitterPtr visual(new FilamentParticleEmitter);
+  bool result = this->InitObject(visual, _id, _name);
+  return (result) ? visual : nullptr;
 }
 
 //////////////////////////////////////////////////

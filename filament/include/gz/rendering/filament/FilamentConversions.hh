@@ -73,34 +73,47 @@ namespace gz
         return {_c.R(), _c.G(), _c.B(), _c.A()};
       }
 
+      /// \brief Filament layer of particle emitters. It stands for gz bit
+      /// 0x00100000, ogre2's Ogre2ParticleEmitter::kParticleVisibilityFlags.
+      constexpr uint8_t kParticleLayer = 0x80u;
+
       /// \brief gz visibility flags (32 bits) to filament layers (8 bits).
-      /// Each gz bit gets its own layer the first time it is seen.
+      /// Each gz bit gets its own layer the first time it is seen; the
+      /// particle bit always maps to kParticleLayer.
       inline uint8_t ToLayers(uint32_t _flags)
       {
         // Values with many bits set (GZ_VISIBILITY_ALL and friends) mean
         // "everything": all layers, without allocating any.
         if (__builtin_popcount(_flags) > 8)
           return 0xffu;
-        // ponytail: process-wide first-come allocation of gz bits to the 8
-        // filament layers; bits past the 7th distinct one share layer 7, so
-        // scenes using more than 7 distinct bits can over-render. Upgrade to
-        // a per-scene table with re-layering if that ever matters.
+        // ponytail: process-wide first-come allocation of gz bits to the
+        // filament layers 0..6; bits past the 6th distinct one share layer
+        // 6, so scenes using more than 6 distinct bits can over-render.
+        // Upgrade to a per-scene table with re-layering if that ever matters.
         static std::array<int8_t, 32> layerOf = [] {
           std::array<int8_t, 32> a{};
           a.fill(-1);
           return a;
         }();
         static int8_t nextLayer = 0;
-        uint8_t layers = 0u;
+        constexpr uint32_t kParticleFlag = 0x00100000u;
+        uint8_t layers = (_flags & kParticleFlag) ? kParticleLayer : 0u;
         for (int b = 0; b < 32; ++b)
         {
-          if (!(_flags & (1u << b)))
+          if (!(_flags & (1u << b)) || (1u << b) == kParticleFlag)
             continue;
           if (layerOf[b] < 0)
-            layerOf[b] = nextLayer < 7 ? nextLayer++ : 7;
+            layerOf[b] = nextLayer < 6 ? nextLayer++ : 6;
           layers |= static_cast<uint8_t>(1u << layerOf[b]);
         }
         return layers;
+      }
+
+      /// \brief Layers seen by sensors that do not render particles as
+      /// geometry (depth, lidar, thermal, segmentation, bounding boxes)
+      inline uint8_t ToSensorLayers(uint32_t _flags)
+      {
+        return ToLayers(_flags) & static_cast<uint8_t>(~kParticleLayer);
       }
 
       /// \brief sRGB transfer function, for values written outside of a

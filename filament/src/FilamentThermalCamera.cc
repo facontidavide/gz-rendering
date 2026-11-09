@@ -222,7 +222,7 @@ void FilamentThermalCamera::Render()
   // id 0: background, ogre2 clears its color pass to (0, 0, 0, 1)
   this->renderTexture->SetClearColor({0.0f, 0.0f, 0.0f, 1.0f});
   this->view->setVisibleLayers(0xff,
-      FilamentConversions::ToLayers(this->VisibilityMask()));
+      FilamentConversions::ToSensorLayers(this->VisibilityMask()));
 
   const int bitDepth = this->ImageFormat() == PF_L8 ? 8 : 16;
   const double bitMax = (1 << bitDepth) - 1.0;

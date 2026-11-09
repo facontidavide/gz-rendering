@@ -105,6 +105,9 @@ namespace gz
       /// \brief Range per ray, read back from the second pass
       private: std::vector<float> ranges;
 
+      /// \brief Half resolution particle depth of the six faces, reused
+      private: std::vector<float> particleDepth;
+
       /// \brief Second pass: its own scene holding a fullscreen triangle
       private: filament::Scene *sampleScene{nullptr};
 

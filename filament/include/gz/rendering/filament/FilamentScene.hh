@@ -19,6 +19,7 @@
 
 #include <set>
 #include <string>
+#include <vector>
 
 #include "gz/rendering/config.hh"
 #include "gz/rendering/base/BaseScene.hh"
@@ -71,6 +72,18 @@ namespace gz
       public: void RegisterMesh(FilamentMesh *_mesh);
 
       public: void UnregisterMesh(FilamentMesh *_mesh);
+
+      /// \brief Particle emitters, in creation order (the sensors' particle
+      /// effects use the first one with live particles, like ogre2)
+      public: const std::vector<FilamentParticleEmitter *> &
+          ParticleEmitters() const;
+
+      /// \brief Add an emitter to ParticleEmitters()
+      public: void RegisterParticleEmitter(FilamentParticleEmitter *_emitter);
+
+      /// \brief Remove an emitter from ParticleEmitters()
+      public: void UnregisterParticleEmitter(
+          FilamentParticleEmitter *_emitter);
 
       protected: virtual DirectionalLightPtr CreateDirectionalLightImpl(
                      unsigned int _id, const std::string &_name) override;
@@ -165,6 +178,9 @@ namespace gz
       protected: virtual RenderWindowPtr CreateRenderWindowImpl(
                      unsigned int _id, const std::string &_name) override;
 
+      protected: virtual ParticleEmitterPtr CreateParticleEmitterImpl(
+                     unsigned int _id, const std::string &_name) override;
+
       protected: virtual RayQueryPtr CreateRayQueryImpl(
                      unsigned int _id, const std::string &_name) override;
 
@@ -221,8 +237,12 @@ namespace gz
 
       protected: std::set<FilamentMesh *> meshes;
 
+      protected: std::vector<FilamentParticleEmitter *> particleEmitters;
+
       private: friend class FilamentRenderEngine;
       private: friend class FilamentMesh;
+
+      private: friend class FilamentParticleEmitter;
     };
     }
   }
