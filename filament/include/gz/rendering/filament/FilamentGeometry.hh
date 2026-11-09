@@ -53,6 +53,7 @@ namespace gz
       protected: FilamentVisualPtr parent;
 
       private: friend class FilamentVisual;
+      private: friend class FilamentHeightmap;
     };
     }
   }

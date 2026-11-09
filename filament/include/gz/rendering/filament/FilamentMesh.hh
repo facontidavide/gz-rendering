@@ -76,6 +76,10 @@ namespace gz
       /// \brief Register a submesh built by the mesh factory
       public: void AddSubMesh(FilamentSubMeshPtr _subMesh);
 
+      /// \brief Thermal draws it white unless it is a heat source, whatever
+      /// its material (how ogre2 draws Terra)
+      public: bool thermalWhite{false};
+
       protected: virtual SubMeshStorePtr SubMeshes() const override;
 
       protected: virtual void Init() override;

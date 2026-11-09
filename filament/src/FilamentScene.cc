@@ -26,6 +26,7 @@
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
 #include "gz/rendering/filament/FilamentGpuRays.hh"
 #include "gz/rendering/filament/FilamentBoundingBoxCamera.hh"
+#include "gz/rendering/filament/FilamentHeightmap.hh"
 #include "gz/rendering/filament/FilamentSegmentationCamera.hh"
 #include "gz/rendering/filament/FilamentThermalCamera.hh"
 #include "gz/rendering/filament/FilamentLight.hh"
@@ -350,10 +351,17 @@ FrustumVisualPtr FilamentScene::CreateFrustumVisualImpl(unsigned int,
 }
 
 //////////////////////////////////////////////////
-HeightmapPtr FilamentScene::CreateHeightmapImpl(unsigned int,
-    const std::string &, const HeightmapDescriptor &)
+HeightmapPtr FilamentScene::CreateHeightmapImpl(unsigned int _id,
+    const std::string &_name, const HeightmapDescriptor &_desc)
 {
-  return nullptr;
+  FilamentHeightmapPtr heightmap(new FilamentHeightmap(_desc));
+  this->InitObject(heightmap, _id, _name);
+  if (heightmap->Entity().isNull())
+  {
+    heightmap->Destroy();
+    return nullptr;
+  }
+  return heightmap;
 }
 
 //////////////////////////////////////////////////
