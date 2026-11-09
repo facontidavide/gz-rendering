@@ -519,6 +519,8 @@ TEST_F(CameraTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(ShaderSelection))
   // This test checks that custom shaders are being rendering correctly in
   // camera view. It also verifies that visual selection is working and the
   // visual's material remains the same after selection.
+  // Raw GLSL shader files: filament only consumes matc-compiled materials.
+  CHECK_UNSUPPORTED_ENGINE("filament");
 
   ScenePtr scene = engine->CreateScene("scene");
   ASSERT_NE(nullptr, scene);

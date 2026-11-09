@@ -72,6 +72,23 @@ namespace gz
         return {_c.R(), _c.G(), _c.B(), _c.A()};
       }
 
+      /// \brief gz visibility flags (32 bits) to filament layers (8 bits).
+      /// ponytail: bits 0-6 map 1:1, bits 7-31 all fold into layer 7; a
+      /// camera masking only some of the high bits sees all of them.
+      inline uint8_t ToLayers(uint32_t _flags)
+      {
+        return static_cast<uint8_t>((_flags & 0x7fu) |
+            ((_flags & ~0x7fu) ? 0x80u : 0u));
+      }
+
+      /// \brief sRGB transfer function, for values written outside of a
+      /// filament render pass (e.g. background-colored point cloud entries)
+      inline double LinearToSrgb(double _x)
+      {
+        return _x < 0.0031308 ? _x * 12.92
+                              : 1.055 * std::pow(_x, 1.0 / 2.4) - 0.055;
+      }
+
       /// \brief Rotation from the gz camera frame (X forward, Z up) to the
       /// filament camera frame (-Z forward, Y up). Same matrix as the one
       /// used by BaseCamera::ViewMatrix().

@@ -16,8 +16,10 @@
  */
 
 #include <cmath>
+#include <cstring>
 #include <limits>
 
+#include <filament/Camera.h>
 #include <filament/Engine.h>
 #include <filament/Material.h>
 #include <filament/MaterialInstance.h>
@@ -27,9 +29,11 @@
 #include <gz/math/Helpers.hh>
 
 #include "gz/rendering/Image.hh"
+#include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
+#include "gz/rendering/filament/FilamentRenderTarget.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
 
 using namespace gz;
@@ -67,6 +71,11 @@ void FilamentDepthCamera::Destroy()
   if (engine && this->depthInstance)
     engine->destroy(this->depthInstance);
   this->depthInstance = nullptr;
+  if (this->colorTexture)
+  {
+    this->colorTexture->Destroy();
+    this->colorTexture.reset();
+  }
   FilamentCamera::Destroy();
 }
 
@@ -89,16 +98,53 @@ void FilamentDepthCamera::CreateDepthTexture()
   this->renderTexture->SetHeight(this->ImageHeight());
 }
 
+namespace
+{
+  /// \brief The depth pass renders with a closer near plane and a farther far
+  /// plane than requested, so geometry just outside [near, far] is still
+  /// rasterized and can be reported as -inf / +inf instead of being clipped
+  /// (ogre2 gets the near case from depth clamping, which filament only
+  /// enables for shadow passes).
+  constexpr double kNearScale = 0.1;
+  constexpr double kFarScale = 1.1;
+}
+
 //////////////////////////////////////////////////
 void FilamentDepthCamera::Render()
 {
   if (!this->depthInstance)
     this->CreateDepthTexture();
-  this->UpdateProjection();
-  // background reads as "beyond far"
+
+  const double aspect = this->AspectRatio();
+  const double hfovDeg = this->HFOV().Degree();
+  this->camera->setProjection(hfovDeg, aspect,
+      this->NearClipPlane() * kNearScale, this->FarClipPlane() * kFarScale,
+      filament::Camera::Fov::HORIZONTAL);
+
+  this->view->setVisibleLayers(0xff,
+      FilamentConversions::ToLayers(this->VisibilityMask()));
+
+  // Color pass, only needed for the colored point cloud
+  if (this->newRgbPointCloud.ConnectionCount() > 0u)
+  {
+    if (!this->colorTexture)
+    {
+      this->colorTexture = std::dynamic_pointer_cast<FilamentRenderTexture>(
+          this->scene->CreateRenderTexture());
+      this->colorTexture->SetFormat(PF_R8G8B8A8);
+    }
+    this->colorTexture->SetWidth(this->ImageWidth());
+    this->colorTexture->SetHeight(this->ImageHeight());
+    this->colorTexture->PreRender();
+    this->colorTexture->SetClearColor(
+        FilamentConversions::ToFloat4(this->scene->BackgroundColor()));
+    this->colorTexture->Render(this->view);
+  }
+
+  // Depth pass: every mesh drawn with the linear-depth material.
+  // Background reads as "beyond far".
   const float inf = std::numeric_limits<float>::infinity();
   this->renderTexture->SetClearColor({inf, inf, inf, 1.0f});
-
   const auto &meshes = this->scene->Meshes();
   for (FilamentMesh *m : meshes)
     m->OverrideMaterial(this->depthInstance);
@@ -121,49 +167,78 @@ void FilamentDepthCamera::PostRender()
   this->renderTexture->Copy(img);
   const float *src = img.Data<float>();
 
-  const float inf = std::numeric_limits<float>::infinity();
-  const float nearClip = static_cast<float>(this->NearClipPlane());
-  const float farClip = static_cast<float>(this->FarClipPlane());
-  const float tol = 1e-4f;
-  for (size_t i = 0; i < len; ++i)
+  const bool wantCloud = this->newRgbPointCloud.ConnectionCount() > 0u;
+  const unsigned char *rgba = nullptr;
+  Image colorImg;
+  if (wantCloud && this->colorTexture)
   {
-    float d = src[i];
-    if (d > farClip - tol)
-      d = inf;
-    else if (d < nearClip + tol)
-      d = -inf;
-    this->depthImage[i] = d;
+    colorImg = Image(width, height, PF_R8G8B8A8);
+    this->colorTexture->Copy(colorImg);
+    rgba = colorImg.Data<unsigned char>();
+  }
+  if (wantCloud)
+    this->pointCloud.resize(len * 4u);
+
+  // Same clamping rules as ogre2's depth_camera_fs.glsl: beyond far is
+  // judged on the euclidean range, nearer than near on the forward distance.
+  const float minVal = -std::numeric_limits<float>::infinity();
+  const float maxVal = std::numeric_limits<float>::infinity();
+  const double nearClip = this->NearClipPlane();
+  const double farClip = this->FarClipPlane();
+  const double tol = 1e-6;
+  const double fx = (width * 0.5) / std::tan(this->HFOV().Radian() * 0.5);
+  const double cx = width * 0.5;
+  const double cy = height * 0.5;
+  const math::Color bg = this->scene->BackgroundColor();
+  for (unsigned int v = 0; v < height; ++v)
+  {
+    for (unsigned int u = 0; u < width; ++u)
+    {
+      const size_t i = static_cast<size_t>(v) * width + u;
+      const double d = src[i];
+      // camera frame: X forward, Y left, Z up
+      double p[3] = {d, -(u + 0.5 - cx) / fx * d, -(v + 0.5 - cy) / fx * d};
+      bool clamped = false;
+      if (std::isinf(d) ||
+          std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) > farClip - tol)
+      {
+        p[0] = p[1] = p[2] = maxVal;
+        clamped = true;
+      }
+      else if (d < nearClip + tol)
+      {
+        p[0] = p[1] = p[2] = minVal;
+        clamped = true;
+      }
+      this->depthImage[i] = static_cast<float>(p[0]);
+
+      if (!wantCloud)
+        continue;
+      float *out = &this->pointCloud[i * 4u];
+      out[0] = static_cast<float>(p[0]);
+      out[1] = static_cast<float>(p[1]);
+      out[2] = static_cast<float>(p[2]);
+      uint32_t r, g, b;
+      if (clamped || !rgba)
+      {
+        // ogre2 also writes the background color for clamped points; it
+        // gamma-encodes it, the color pass target here is sRGB as well
+        r = static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.R()) * 255.0));
+        g = static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.G()) * 255.0));
+        b = static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.B()) * 255.0));
+      }
+      else
+      {
+        r = rgba[i * 4u]; g = rgba[i * 4u + 1u]; b = rgba[i * 4u + 2u];
+      }
+      const uint32_t packed = (r << 24u) | (g << 16u) | (b << 8u) | 255u;
+      std::memcpy(&out[3], &packed, sizeof(float));
+    }
   }
 
   this->newDepthFrame(this->depthImage.data(), width, height, 1u, "FLOAT32");
-
-  if (this->newRgbPointCloud.ConnectionCount() > 0u)
+  if (wantCloud)
   {
-    // Pinhole back-projection into the gz camera frame (X fwd, Y left, Z up)
-    this->pointCloud.resize(len * 4u);
-    const double fx = (width * 0.5) / std::tan(this->HFOV().Radian() * 0.5);
-    const double cx = width * 0.5;
-    const double cy = height * 0.5;
-    for (unsigned int v = 0; v < height; ++v)
-    {
-      for (unsigned int u = 0; u < width; ++u)
-      {
-        const size_t i = static_cast<size_t>(v) * width + u;
-        const float d = this->depthImage[i];
-        float *p = &this->pointCloud[i * 4u];
-        if (std::isinf(d))
-        {
-          p[0] = p[1] = p[2] = d;
-        }
-        else
-        {
-          p[0] = d;
-          p[1] = static_cast<float>(-(u + 0.5 - cx) / fx * d);
-          p[2] = static_cast<float>(-(v + 0.5 - cy) / fx * d);
-        }
-        p[3] = 0.0f;  // packed RGBA color: not rendered by this engine yet
-      }
-    }
     this->newRgbPointCloud(this->pointCloud.data(), width, height, 4u,
         "PF_FLOAT32_RGBA");
   }

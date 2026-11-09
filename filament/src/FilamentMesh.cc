@@ -85,12 +85,12 @@ void FilamentMesh::Destroy()
 }
 
 //////////////////////////////////////////////////
-void FilamentMesh::SetVisible(bool _visible)
+void FilamentMesh::SetLayers(uint8_t _layers)
 {
   auto &rm = Engine()->getRenderableManager();
   if (!rm.hasComponent(this->entity))
     return;
-  rm.setLayerMask(rm.getInstance(this->entity), 0xff, _visible ? 0x1 : 0x0);
+  rm.setLayerMask(rm.getInstance(this->entity), 0xff, _layers);
 }
 
 //////////////////////////////////////////////////

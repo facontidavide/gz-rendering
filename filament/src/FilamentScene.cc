@@ -82,6 +82,13 @@ math::Color FilamentScene::AmbientLight() const
 }
 
 //////////////////////////////////////////////////
+VisualPtr FilamentScene::VisualAt(const CameraPtr &_camera,
+    const math::Vector2i &_mousePos)
+{
+  return _camera ? _camera->VisualAt(_mousePos) : VisualPtr();
+}
+
+//////////////////////////////////////////////////
 void FilamentScene::SetAmbientLight(const math::Color &_color)
 {
   this->ambient = _color;

@@ -248,7 +248,12 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
       }
     }
     if (!material)
+    {
+      // ogre2 draws material-less meshes with its default datablock: flat
+      // unlit white
       material = this->scene->CreateMaterial();
+      material->SetLightingEnabled(false);
+    }
 
     prims.push_back({sub, type, material});
   }

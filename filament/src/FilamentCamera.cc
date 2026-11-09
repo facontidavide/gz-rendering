@@ -27,6 +27,7 @@
 
 #include "gz/rendering/filament/FilamentCamera.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
+#include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
 
@@ -114,6 +115,48 @@ void FilamentCamera::Init()
 }
 
 //////////////////////////////////////////////////
+VisualPtr FilamentCamera::VisualAt(const math::Vector2i &_mousePos)
+{
+  if (!this->view || _mousePos.X() < 0 || _mousePos.Y() < 0 ||
+      static_cast<unsigned int>(_mousePos.X()) >= this->ImageWidth() ||
+      static_cast<unsigned int>(_mousePos.Y()) >= this->ImageHeight())
+  {
+    return VisualPtr();
+  }
+
+  // The query is answered by the next render of this view. Its callback can
+  // fire after this function returns if the driver is slow, so the result
+  // lives in a shared state rather than on the stack.
+  struct Result { ::utils::Entity entity; bool done{false}; };
+  auto result = std::make_shared<Result>();
+  // filament picking coordinates have their origin at the bottom-left
+  this->view->pick(static_cast<uint32_t>(_mousePos.X()),
+      this->ImageHeight() - 1u - static_cast<uint32_t>(_mousePos.Y()),
+      [result](const filament::View::PickingQueryResult &_r)
+      {
+        result->entity = _r.renderable;
+        result->done = true;
+      });
+  this->PreRender();
+  this->Render();
+  auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+  for (int i = 0; i < 10 && !result->done; ++i)
+  {
+    engine->flushAndWait();
+    engine->pumpMessageQueues();
+  }
+  if (!result->done || result->entity.isNull())
+    return VisualPtr();
+
+  for (FilamentMesh *mesh : this->scene->Meshes())
+  {
+    if (mesh->Entity() == result->entity)
+      return mesh->Parent();
+  }
+  return VisualPtr();
+}
+
+//////////////////////////////////////////////////
 void FilamentCamera::CreateRenderTexture()
 {
   RenderTexturePtr base = this->scene->CreateRenderTexture();
@@ -140,5 +183,7 @@ void FilamentCamera::Render()
   this->UpdateProjection();
   const math::Color bg = this->scene->BackgroundColor();
   this->renderTexture->SetClearColor(FilamentConversions::ToFloat4(bg));
+  this->view->setVisibleLayers(0xff,
+      FilamentConversions::ToLayers(this->VisibilityMask()));
   this->renderTexture->Render(this->view);
 }

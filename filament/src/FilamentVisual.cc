@@ -21,6 +21,7 @@
 
 #include <gz/common/Console.hh>
 
+#include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentGeometry.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
@@ -42,14 +43,30 @@ FilamentVisual::~FilamentVisual()
 //////////////////////////////////////////////////
 void FilamentVisual::SetVisible(bool _visible)
 {
-  for (auto it = this->geometries->Begin(); it != this->geometries->End(); ++it)
-    (*it)->SetVisible(_visible);
+  this->visible = _visible;
+  this->UpdateLayers();
   for (unsigned int i = 0; i < this->ChildCount(); ++i)
   {
     auto child = std::dynamic_pointer_cast<Visual>(this->ChildByIndex(i));
     if (child)
       child->SetVisible(_visible);
   }
+}
+
+//////////////////////////////////////////////////
+void FilamentVisual::SetVisibilityFlags(uint32_t _flags)
+{
+  BaseVisual::SetVisibilityFlags(_flags);
+  this->UpdateLayers();
+}
+
+//////////////////////////////////////////////////
+void FilamentVisual::UpdateLayers()
+{
+  const uint8_t layers = this->visible ?
+      FilamentConversions::ToLayers(this->VisibilityFlags()) : 0u;
+  for (auto it = this->geometries->Begin(); it != this->geometries->End(); ++it)
+    (*it)->SetLayers(layers);
 }
 
 //////////////////////////////////////////////////
@@ -86,6 +103,8 @@ bool FilamentVisual::AttachGeometry(GeometryPtr _geometry)
   tm.setParent(tm.getInstance(derived->Entity()),
                tm.getInstance(this->entity));
   this->scene->Native()->addEntity(derived->Entity());
+  derived->SetLayers(this->visible ?
+      FilamentConversions::ToLayers(this->VisibilityFlags()) : 0u);
   return true;
 }
 

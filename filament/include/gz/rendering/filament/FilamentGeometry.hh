@@ -45,7 +45,8 @@ namespace gz
       /// \brief Renderable entity (has transform + renderable components)
       public: virtual ::utils::Entity Entity() const = 0;
 
-      public: virtual void SetVisible(bool _visible) = 0;
+      /// \brief Set the filament layer mask of the renderable (0 = hidden)
+      public: virtual void SetLayers(uint8_t _layers) = 0;
 
       protected: virtual void SetParent(FilamentVisualPtr _parent);
 

@@ -72,6 +72,9 @@ namespace gz
 
       protected: filament::MaterialInstance *depthInstance{nullptr};
 
+      /// \brief Color pass target, created on demand for the point cloud
+      protected: FilamentRenderTexturePtr colorTexture;
+
       protected: std::vector<float> depthImage;
 
       protected: std::vector<float> pointCloud;

@@ -52,6 +52,11 @@ namespace gz
 
       public: virtual math::Color AmbientLight() const override;
 
+      /// \brief GPU picking through the camera.
+      /// ponytail: no RayQuery yet, so picking is camera-only
+      public: virtual VisualPtr VisualAt(const CameraPtr &_camera,
+          const math::Vector2i &_mousePos) override;
+
       public: virtual void SetAmbientLight(const math::Color &_color) override;
 
       /// \brief Native filament scene

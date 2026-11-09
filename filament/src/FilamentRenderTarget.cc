@@ -31,6 +31,7 @@
 #include "gz/rendering/Image.hh"
 #include "gz/rendering/PixelFormat.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
+#include "gz/rendering/Utils.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
 
 using namespace gz;
@@ -159,6 +160,17 @@ void FilamentRenderTarget::Copy(Image &_image) const
   if (_image.Width() != this->width || _image.Height() != this->height)
   {
     gzerr << "Invalid image dimensions" << std::endl;
+    return;
+  }
+
+  const PixelFormat dstFormat = _image.Format();
+  if (dstFormat == PF_BAYER_RGGB8 || dstFormat == PF_BAYER_BGGR8 ||
+      dstFormat == PF_BAYER_GBRG8 || dstFormat == PF_BAYER_GRBG8)
+  {
+    // render target holds RGB: read that back, then mosaic on the CPU
+    Image colorImage(this->width, this->height, PF_R8G8B8);
+    this->Copy(colorImage);
+    convertRGBToBayer(colorImage, PixelBuffer(_image));
     return;
   }
 

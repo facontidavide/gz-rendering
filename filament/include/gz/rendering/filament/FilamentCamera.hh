@@ -51,6 +51,10 @@ namespace gz
 
       public: filament::View *View() const;
 
+      /// \brief Picking through filament::View::pick (renders one frame)
+      public: virtual VisualPtr VisualAt(const math::Vector2i &_mousePos)
+          override;
+
       public: filament::Camera *Native() const;
 
       protected: virtual RenderTargetPtr RenderTarget() const override;

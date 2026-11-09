@@ -38,6 +38,8 @@ namespace gz
 
       public: virtual void SetVisible(bool _visible) override;
 
+      public: virtual void SetVisibilityFlags(uint32_t _flags) override;
+
       protected: virtual GeometryStorePtr Geometries() const override;
 
       protected: virtual bool AttachGeometry(GeometryPtr _geometry) override;
@@ -46,7 +48,12 @@ namespace gz
 
       protected: virtual void Init() override;
 
+      /// \brief Push the current visibility state to the geometries
+      protected: void UpdateLayers();
+
       protected: FilamentGeometryStorePtr geometries;
+
+      protected: bool visible{true};
 
       private: FilamentVisualPtr SharedThis();
 

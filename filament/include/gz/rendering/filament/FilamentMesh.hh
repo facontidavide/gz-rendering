@@ -52,7 +52,7 @@ namespace gz
 
       public: virtual ::utils::Entity Entity() const override;
 
-      public: virtual void SetVisible(bool _visible) override;
+      public: virtual void SetLayers(uint8_t _layers) override;
 
       /// \brief Temporarily render every submesh with _instance
       public: void OverrideMaterial(filament::MaterialInstance *_instance);
