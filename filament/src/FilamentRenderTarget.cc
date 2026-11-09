@@ -32,6 +32,7 @@
 #include "gz/rendering/Image.hh"
 #include "gz/rendering/PixelFormat.hh"
 #include "gz/rendering/filament/FilamentGaussianNoisePass.hh"
+#include "gz/rendering/filament/FilamentLensFlarePass.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/Utils.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
@@ -156,8 +157,14 @@ void FilamentRenderTarget::ApplyRenderPasses(
 {
   for (const RenderPassPtr &pass : _passes)
   {
-    auto *noise = dynamic_cast<FilamentGaussianNoisePass *>(pass.get());
-    if (!noise || !noise->IsEnabled() || !this->target)
+    if (!pass->IsEnabled() || !this->target)
+      continue;
+    filament::View *view = nullptr;
+    if (auto *noise = dynamic_cast<FilamentGaussianNoisePass *>(pass.get()))
+      view = noise->ColorView(this->colorTexture);
+    else if (auto *flare = dynamic_cast<FilamentLensFlarePass *>(pass.get()))
+      view = flare->ColorView(this->colorTexture);
+    if (!view)
       continue;
     // ping-pong: draw from the current attachments into a second set, which
     // then becomes the current one
@@ -166,9 +173,6 @@ void FilamentRenderTarget::ApplyRenderPasses(
       this->BuildAttachments(this->scratchTarget, this->scratchColor,
           this->scratchDepth);
     }
-    filament::View *view = noise->ColorView(this->colorTexture);
-    if (!view)
-      continue;
     std::swap(this->target, this->scratchTarget);
     std::swap(this->colorTexture, this->scratchColor);
     std::swap(this->depthTexture, this->scratchDepth);

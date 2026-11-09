@@ -34,6 +34,7 @@
 // front of the depth cameras, lidars and thermal cameras, see Particles()
 // PARITY_NOISE=1: only the Gaussian noise pass outputs (RGB, wide angle,
 // depth + point cloud, thermal), see Noise()
+// PARITY_LENSFLARE=1: only lens flare pictures (lf_*.png), see LensFlare()
 // PARITY_PROJECTION=1: only custom (off-center intrinsics) and orthographic
 // projections on depth, bbox and RGB cameras, see Projection()
 
@@ -66,6 +67,7 @@
 #include <gz/rendering/Heightmap.hh>
 #include <gz/rendering/Light.hh>
 #include <gz/rendering/Image.hh>
+#include <gz/rendering/LensFlarePass.hh>
 #include <gz/rendering/GpuRays.hh>
 #include <gz/rendering/RenderEngine.hh>
 #include <gz/rendering/RenderPassSystem.hh>
@@ -436,6 +438,76 @@ namespace
       }
       geom->DestroyVisual(v);
     }
+  }
+
+  /// \brief PARITY_LENSFLARE=1: lens_flare.png pictures for eyeballing, not
+  /// compared: lf_ref (no pass), lf_open (sun in view), lf_partial (the sun
+  /// half behind a box), lf_wide (wide-angle camera, after stitching)
+  void LensFlare(RenderEngine *_engine, const std::string &_dir)
+  {
+    ScenePtr scene = _engine->CreateScene("lensflare");
+    scene->SetAmbientLight(0.3, 0.3, 0.3);
+    scene->SetBackgroundColor(0.4, 0.55, 0.8);
+    VisualPtr root = scene->RootVisual();
+    DirectionalLightPtr sun = scene->CreateDirectionalLight();
+    sun->SetDirection(-1.0, -0.25, -0.25);
+    sun->SetDiffuseColor(0.8, 0.8, 0.8);
+    root->AddChild(sun);
+    MaterialPtr green = scene->CreateMaterial();
+    green->SetDiffuse(0.1, 0.6, 0.1);
+    VisualPtr ground = scene->CreateVisual();
+    ground->AddGeometry(scene->CreatePlane());
+    ground->SetLocalScale(40, 40, 1);
+    ground->SetMaterial(green);
+    root->AddChild(ground);
+    MaterialPtr red = scene->CreateMaterial();
+    red->SetDiffuse(0.7, 0.1, 0.1);
+    VisualPtr box = scene->CreateVisual();
+    box->AddGeometry(scene->CreateBox());
+    box->SetLocalPosition(4.0, 0.48, 2.0);
+    box->SetMaterial(red);
+    root->AddChild(box);
+
+    auto shot = [&](CameraPtr _cam, const std::string &_name)
+    {
+      Image img = _cam->CreateImage();
+      _cam->Capture(img);
+      common::Image png;
+      png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
+          common::Image::RGB_INT8);
+      png.SavePNG(_dir + "/" + _name + ".png");
+    };
+    auto pass = [&](bool _afterStitching)
+    {
+      LensFlarePassPtr p = std::dynamic_pointer_cast<LensFlarePass>(
+          _engine->RenderPassSystem()->Create<LensFlarePass>());
+      p->Init(scene);
+      p->SetLight(sun);
+      p->SetWideAngleCameraAfterStitching(_afterStitching);
+      return p;
+    };
+
+    CameraPtr cam = scene->CreateCamera();
+    cam->SetImageWidth(320);
+    cam->SetImageHeight(240);
+    cam->SetLocalPosition(0, 0, 1);
+    root->AddChild(cam);
+    box->SetVisible(false);
+    shot(cam, "lf_ref");
+    cam->AddRenderPass(pass(true));
+    shot(cam, "lf_open");
+    box->SetVisible(true);
+    shot(cam, "lf_partial");
+
+    CameraPtr wide = scene->CreateWideAngleCamera();
+    wide->SetImageWidth(320);
+    wide->SetImageHeight(240);
+    wide->SetLocalPosition(0, 0, 1);
+    root->AddChild(wide);
+    box->SetVisible(false);
+    wide->AddRenderPass(pass(true));
+    shot(wide, "lf_wide");
+    _engine->DestroyScene(scene);
   }
 
   /// \brief PARITY_NOISE=1: Gaussian noise render pass outputs, compared as
@@ -1101,6 +1173,13 @@ int main(int _argc, char **_argv)
   if (std::getenv("PARITY_PROJECTION"))
   {
     Projection(scene, dir, index);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
+
+  if (std::getenv("PARITY_LENSFLARE"))
+  {
+    LensFlare(engine, dir);
     std::cout << "wrote " << dir << std::endl;
     return 0;
   }
