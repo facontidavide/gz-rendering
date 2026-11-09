@@ -15,6 +15,7 @@
  *
  */
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <vector>
@@ -238,15 +239,29 @@ filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
                 rowBytes);
   }
 
+  // full mip chain, like ogre2 (it auto-generates mipmaps for albedo
+  // maps): minified textures average instead of aliasing
+  auto &engine = *this->dataPtr->engine;
+  const auto format = filament::Texture::InternalFormat::SRGB8_A8;
+  const bool mips = filament::Texture::isTextureFormatMipmappable(engine,
+      format);
+  uint8_t levels = 1u;
+  while (mips && (std::max(w, h) >> levels) > 0u)
+    ++levels;
   filament::Texture *tex = filament::Texture::Builder()
-      .width(w).height(h).levels(1)
+      .width(w).height(h).levels(levels)
       .sampler(filament::Texture::Sampler::SAMPLER_2D)
-      .format(filament::Texture::InternalFormat::SRGB8_A8)
-      .build(*this->dataPtr->engine);
+      .format(format)
+      .usage(filament::Texture::Usage::DEFAULT |
+             (levels > 1u ? filament::Texture::Usage::GEN_MIPMAPPABLE :
+                            filament::Texture::Usage::NONE))
+      .build(engine);
   filament::Texture::PixelBufferDescriptor desc(buf, rgba.size(),
       filament::Texture::Format::RGBA, filament::Texture::Type::UBYTE,
       [](void *_b, size_t, void *) { delete[] static_cast<unsigned char *>(_b); });
-  tex->setImage(*this->dataPtr->engine, 0, std::move(desc));
+  tex->setImage(engine, 0, std::move(desc));
+  if (levels > 1u)
+    tex->generateMipmaps(engine);
   this->dataPtr->textures[_path] = tex;
   return tex;
 }
