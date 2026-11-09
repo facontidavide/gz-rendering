@@ -10,6 +10,13 @@ Wide-angle dumps (PARITY_WIDEANGLE=1) are compared geometrically instead:
 object centroid offsets, cutoff circle radius and Project3d, in pixels; the
 optional png gets the RGB images side by side (ref left, test right).
 Particle dumps (PARITY_PARTICLES=1) print their statistics side by side.
+
+Exits 1 when an output is outside its tolerance: range outputs (depth,
+cloud XYZ, lidar) 5 mm and identical +inf/-inf/nan classes, segmentation
+the same partition, thermal L8 1 level and L16 p99 10 / max 100 LSB, boxes
+same count and labels within 0.01, drawn box images identical. Known
+exception: with PARITY_HEIGHTMAP, ogre2's visible-2D mode adds a spurious
+label-0 box for Terra. RGB is reported, never gated.
 """
 import os
 import re
@@ -205,6 +212,13 @@ def noise(ref_dir, test_dir, ref, tst):
         print(f"    {label:<4} max |noisy - clean| {np.abs(v - c).max():.1f}")
 
 
+FAILS = []
+
+
+def fail(name, why):
+    FAILS.append(f"{name}: {why}")
+
+
 def main(ref_dir, test_dir, png=None):
     if os.path.exists(f"{ref_dir}/particles.txt"):
         particles(ref_dir, test_dir)
@@ -226,11 +240,18 @@ def main(ref_dir, test_dir, png=None):
             continue
         if name.endswith("_cloud"):
             a, b = a[..., :3], b[..., :3]
-            # a point is finite when all of x, y, z are
-            ca = np.where(np.isfinite(a).all(-1), 0, cls(a[..., 0]))
-            cb = np.where(np.isfinite(b).all(-1), 0, cls(b[..., 0]))
+            # a point is finite when all of x, y, z are; a partly finite
+            # point keeps its own class (3) instead of passing as finite
+            part = lambda p: np.where(np.isfinite(p).all(-1), 0, np.where(
+                np.isfinite(p).any(-1), 3, cls(p[..., 0])))
+            ca, cb = part(a), part(b)
             fin = (ca == 0) & (cb == 0)
             d = np.linalg.norm(a - b, axis=-1)[fin]
+        elif name.startswith("bboxdraw_"):
+            # boxes are drawn in green: compare every channel
+            ca = cb = np.zeros(a.shape[:2], int)
+            fin = ca == 0
+            d = np.abs(a - b).max(-1).ravel()
         else:
             a, b = a[..., 0], b[..., 0]
             ca, cb = cls(a), cls(b)
@@ -238,7 +259,9 @@ def main(ref_dir, test_dir, png=None):
             d = np.abs(a - b)[fin]
         mism = int((ca != cb).sum())
         if d.size == 0:
+            fail(name, "no pixel finite in both")
             d = np.zeros(1)
+        gate(name, mism, d)
         print(f"{name:<20}{ca.size:>8}{mism:>9}{d.max():>10.4f}"
               f"{np.percentile(d, 99):>10.4f}{np.percentile(d, 95):>10.4f}"
               f"{d.mean():>10.5f}{100.0 * (d > 0.01).mean():>8.2f}")
@@ -256,6 +279,8 @@ def main(ref_dir, test_dir, png=None):
                     len(set(kb.tolist())))
             print(f"    differing pixels: {diff}, same partition: {same}, "
                   f"segments: {len(set(ka.tolist()))}")
+            if not same:
+                fail(name, "different partition")
         if mism:
             pairs = {}
             for x, y in zip(ca.ravel(), cb.ravel()):
@@ -273,6 +298,7 @@ def compare_boxes(name, a, b):
     print(f"{name:<20} boxes ref={len(a)} test={len(b)}", end="")
     if len(a) != len(b) or len(a) == 0:
         print("  COUNT/EMPTY MISMATCH")
+        fail(name, "box count mismatch or empty")
         return
     labels = int((a[:, 10] != b[:, 10]).sum())
     dc = np.abs(a[:, 0:3] - b[:, 0:3]).max()
@@ -282,7 +308,43 @@ def compare_boxes(name, a, b):
     dang = np.degrees(2 * np.arccos(dot)).max()
     print(f"  label!={labels}  max|dcenter|={dc:.4f}  max|dsize|={ds:.4f}"
           f"  max rot={dang:.3f}deg")
+    if labels or dc > 0.01 or ds > 0.01 or dang > 0.5:
+        fail(name, "labels or box geometry differ")
+
+
+def gate(name, mism, d):
+    if name.startswith("seg_") or name.startswith("noise_"):
+        return  # partition check / own report
+    if name.startswith("bboxdraw_"):
+        if d.max() > 0:
+            fail(name, f"drawn image differs, max {d.max():.0f}")
+    elif name == "thermal8":
+        if d.max() > 1:
+            fail(name, f"max {d.max():.0f} > 1")
+    elif name == "thermal16":
+        if np.percentile(d, 99) > 10 or d.max() > 100:
+            fail(name, f"p99 {np.percentile(d, 99):.0f} max {d.max():.0f}")
+    elif mism or d.max() > 0.005:
+        fail(name, f"{mism} class mismatches, max {d.max():.4f} m")
+
+
+def rgb(ref_dir, test_dir):
+    """Report only: lighting models differ by design."""
+    try:
+        from PIL import Image
+        a = np.asarray(Image.open(f"{ref_dir}/rgb.png"), float)[..., :3]
+        b = np.asarray(Image.open(f"{test_dir}/rgb.png"), float)[..., :3]
+    except (OSError, ImportError):
+        return
+    d = np.abs(a - b).max(-1)
+    print(f"rgb (not gated): mean|d| {d.mean():.2f}  p95 "
+          f"{np.percentile(d, 95):.0f}  p99 {np.percentile(d, 99):.0f}")
 
 
 if __name__ == "__main__":
     main(*sys.argv[1:4])
+    rgb(*sys.argv[1:3])
+    if FAILS:
+        print("FAIL\n  " + "\n  ".join(FAILS))
+        sys.exit(1)
+    print("PASS")
