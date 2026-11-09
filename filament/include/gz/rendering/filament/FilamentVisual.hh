@@ -69,6 +69,8 @@ namespace gz
       private: friend class FilamentScene;
 
       private: friend class FilamentCapsule;
+
+      private: friend class FilamentMarker;
     };
     }
   }

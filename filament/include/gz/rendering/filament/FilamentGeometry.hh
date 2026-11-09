@@ -56,6 +56,7 @@ namespace gz
       private: friend class FilamentHeightmap;
 
       private: friend class FilamentCapsule;
+      private: friend class FilamentMarker;
     };
     }
   }

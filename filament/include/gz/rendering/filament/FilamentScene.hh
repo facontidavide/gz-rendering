@@ -38,6 +38,8 @@ namespace gz
   {
     inline namespace GZ_RENDERING_VERSION_NAMESPACE {
     //
+    class FilamentDynamicMesh;
+
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentScene :
       public BaseScene
     {
@@ -55,8 +57,8 @@ namespace gz
 
       public: virtual math::Color AmbientLight() const override;
 
-      /// \brief GPU picking through the camera.
-      /// ponytail: no RayQuery yet, so picking is camera-only
+      /// \brief GPU picking through the camera. FilamentRayQuery casts a
+      /// ray against the meshes instead.
       public: virtual VisualPtr VisualAt(const CameraPtr &_camera,
           const math::Vector2i &_mousePos) override;
 
@@ -70,6 +72,10 @@ namespace gz
       public: const std::set<FilamentMesh *> &Meshes() const;
 
       public: void RegisterMesh(FilamentMesh *_mesh);
+
+      /// \brief Create a mesh whose vertices are rebuilt on change (lines,
+      /// points, triangles), for markers, wire boxes and grids
+      public: std::shared_ptr<FilamentDynamicMesh> CreateDynamicMesh();
 
       public: void UnregisterMesh(FilamentMesh *_mesh);
 
@@ -194,6 +200,9 @@ namespace gz
                      const std::string &_name) override;
 
       protected: virtual LightVisualPtr CreateLightVisualImpl(unsigned int _id,
+                     const std::string &_name) override;
+
+      protected: virtual GizmoVisualPtr CreateGizmoVisualImpl(unsigned int _id,
                      const std::string &_name) override;
 
       protected: virtual LightStorePtr Lights() const override;

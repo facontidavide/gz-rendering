@@ -65,7 +65,7 @@ namespace gz
                   filament::MaterialInstance *_instance);
 
       /// \brief Undo OverrideMaterial
-      public: void RestoreMaterials();
+      public: virtual void RestoreMaterials();
 
       /// \brief Rebind the submeshes bound to _old to _new: the material
       /// owning _old is destroyed while still in use (ogre2 falls back to
