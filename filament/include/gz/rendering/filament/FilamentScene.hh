@@ -85,6 +85,9 @@ namespace gz
       protected: virtual DepthCameraPtr CreateDepthCameraImpl(unsigned int _id,
                      const std::string &_name) override;
 
+      protected: virtual GpuRaysPtr CreateGpuRaysImpl(unsigned int _id,
+                     const std::string &_name) override;
+
       protected: virtual VisualPtr CreateVisualImpl(unsigned int _id,
                      const std::string &_name) override;
 

@@ -17,6 +17,7 @@
 #ifndef GZ_RENDERING_FILAMENT_FILAMENTCONVERSIONS_HH_
 #define GZ_RENDERING_FILAMENT_FILAMENTCONVERSIONS_HH_
 
+#include <array>
 #include <cmath>
 
 #include <math/mat4.h>
@@ -73,12 +74,33 @@ namespace gz
       }
 
       /// \brief gz visibility flags (32 bits) to filament layers (8 bits).
-      /// ponytail: bits 0-6 map 1:1, bits 7-31 all fold into layer 7; a
-      /// camera masking only some of the high bits sees all of them.
+      /// Each gz bit gets its own layer the first time it is seen.
       inline uint8_t ToLayers(uint32_t _flags)
       {
-        return static_cast<uint8_t>((_flags & 0x7fu) |
-            ((_flags & ~0x7fu) ? 0x80u : 0u));
+        // Values with many bits set (GZ_VISIBILITY_ALL and friends) mean
+        // "everything": all layers, without allocating any.
+        if (__builtin_popcount(_flags) > 8)
+          return 0xffu;
+        // ponytail: process-wide first-come allocation of gz bits to the 8
+        // filament layers; bits past the 7th distinct one share layer 7, so
+        // scenes using more than 7 distinct bits can over-render. Upgrade to
+        // a per-scene table with re-layering if that ever matters.
+        static std::array<int8_t, 32> layerOf = [] {
+          std::array<int8_t, 32> a{};
+          a.fill(-1);
+          return a;
+        }();
+        static int8_t nextLayer = 0;
+        uint8_t layers = 0u;
+        for (int b = 0; b < 32; ++b)
+        {
+          if (!(_flags & (1u << b)))
+            continue;
+          if (layerOf[b] < 0)
+            layerOf[b] = nextLayer < 7 ? nextLayer++ : 7;
+          layers |= static_cast<uint8_t>(1u << layerOf[b]);
+        }
+        return layers;
       }
 
       /// \brief sRGB transfer function, for values written outside of a
