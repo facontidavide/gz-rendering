@@ -45,6 +45,9 @@ class WavesTest: public CommonRenderingTest
 /////////////////////////////////////////////////
 TEST_F(WavesTest, Waves)
 {
+  // raw GLSL shader materials: filament only runs matc-compiled materials
+  CHECK_UNSUPPORTED_ENGINE("filament");
+
   if (GraphicsAPI::METAL == this->engine->GraphicsAPI())
   {
     // \todo(iche033) Test fails on ogre2 with metal. To be investigated.
