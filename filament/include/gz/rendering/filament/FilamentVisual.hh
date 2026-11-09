@@ -67,6 +67,8 @@ namespace gz
       private: FilamentVisualPtr SharedThis();
 
       private: friend class FilamentScene;
+
+      private: friend class FilamentCapsule;
     };
     }
   }

@@ -24,6 +24,7 @@
 #include <gz/common/Console.hh>
 
 #include "gz/rendering/filament/FilamentCamera.hh"
+#include "gz/rendering/filament/FilamentCapsule.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
 #include "gz/rendering/filament/FilamentGpuRays.hh"
@@ -361,10 +362,12 @@ MeshPtr FilamentScene::CreateMeshImpl(unsigned int _id,
 }
 
 //////////////////////////////////////////////////
-CapsulePtr FilamentScene::CreateCapsuleImpl(unsigned int,
-    const std::string &)
+CapsulePtr FilamentScene::CreateCapsuleImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto capsule = std::shared_ptr<FilamentCapsule>(new FilamentCapsule);
+  bool result = this->InitObject(capsule, _id, _name);
+  return (result) ? capsule : nullptr;
 }
 
 //////////////////////////////////////////////////

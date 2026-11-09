@@ -23,6 +23,7 @@
 // usage: filament_parity <engine> <outdir> [timingFrames] [engineParam]
 // engineParam is set to "1", e.g. "opengl" for filament
 // PARITY_HEATSIG=1: adds heat signature objects (thermal outputs)
+// PARITY_CAPSULE=1: adds a tilted capsule, resized after it is attached
 // PARITY_WIDEANGLE=1: only the wide-angle camera geometry checks (RGB images,
 // per-object centroids, cutoff circle radius, Project3d), see WideAngle()
 // PARITY_PARTICLES=1: only particle statistics, with a particle emitter in
@@ -51,6 +52,7 @@
 
 #include <gz/rendering/BoundingBoxCamera.hh>
 #include <gz/rendering/Camera.hh>
+#include <gz/rendering/Capsule.hh>
 #include <gz/rendering/DepthCamera.hh>
 #include <gz/rendering/Heightmap.hh>
 #include <gz/rendering/Light.hh>
@@ -166,6 +168,14 @@ namespace
       model->AddChild(link);
     }
     _scene->RootVisual()->AddChild(model);
+
+    if (std::getenv("PARITY_CAPSULE"))
+    {
+      CapsulePtr capsule = _scene->CreateCapsule();
+      Add(_scene, capsule, {1.6, 1.3, 0.7, 0.5, 0.3, 0.2}, {1, 1, 1});
+      capsule->SetRadius(0.3);
+      capsule->SetLength(0.8);
+    }
 
     // PARITY_HEATSIG=1: heat signature textures in the thermal view, a
     // uniform gray one (magnified) and texture.png's red channel

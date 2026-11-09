@@ -34,7 +34,7 @@ class CapsuleTest : public CommonRenderingTest
 /////////////////////////////////////////////////
 TEST_F(CapsuleTest, Capsule)
 {
-  CHECK_SUPPORTED_ENGINE("ogre", "ogre2");
+  CHECK_SUPPORTED_ENGINE("ogre", "ogre2", "filament");
 
   ScenePtr scene = engine->CreateScene("scene");
 
