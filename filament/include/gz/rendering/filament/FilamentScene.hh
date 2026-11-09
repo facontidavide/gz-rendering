@@ -99,6 +99,9 @@ namespace gz
       protected: virtual GpuRaysPtr CreateGpuRaysImpl(unsigned int _id,
                      const std::string &_name) override;
 
+      protected: virtual WideAngleCameraPtr CreateWideAngleCameraImpl(
+                     unsigned int _id, const std::string &_name) override;
+
       protected: virtual VisualPtr CreateVisualImpl(unsigned int _id,
                      const std::string &_name) override;
 

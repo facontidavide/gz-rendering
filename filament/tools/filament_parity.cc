@@ -22,6 +22,8 @@
 //
 // usage: filament_parity <engine> <outdir> [timingFrames] [engineParam]
 // engineParam is set to "1", e.g. "opengl" for filament
+// PARITY_WIDEANGLE=1: only the wide-angle camera geometry checks (RGB images,
+// per-object centroids, cutoff circle radius, Project3d), see WideAngle()
 
 #include <algorithm>
 #include <chrono>
@@ -33,6 +35,7 @@
 #include <string>
 #include <vector>
 
+#include <cmath>
 #include <cstdlib>
 #include <sstream>
 
@@ -57,6 +60,7 @@
 #include <gz/rendering/ThermalCamera.hh>
 #include <gz/rendering/Material.hh>
 #include <gz/rendering/Visual.hh>
+#include <gz/rendering/WideAngleCamera.hh>
 
 using namespace gz;
 using namespace rendering;
@@ -218,6 +222,169 @@ namespace
     return {t[t.size() / 2], t[t.size() * 9 / 10]};
   }
 
+  /// \brief sRGB byte to linear [0, 1]
+  double Linear(uint8_t _v)
+  {
+    const double x = _v / 255.0;
+    return x <= 0.04045 ? x / 12.92 : std::pow((x + 0.055) / 1.055, 2.4);
+  }
+
+  /// \brief Wide-angle camera geometry, comparable across engines whose
+  /// shading differs: for every lens, an RGB image of the main scene
+  /// (wa_<lens>_rgb), then in an empty scene the cutoff circle radius along
+  /// the center row on a white background (wa_cutoff.txt), the centroid and
+  /// area of every sphere rendered alone on black next to Project3d of its
+  /// center (wa_geom.txt), and an L8 image of the first lens (wa_l8).
+  void WideAngle(RenderEngine *_engine, ScenePtr _scene,
+      const std::string &_dir, std::ofstream &_index)
+  {
+    struct Cfg
+    {
+      std::string name; MappingFunctionType type; double hfov, cutoff;
+      unsigned int w, h;
+    };
+    const std::vector<Cfg> cfgs = {
+      // the integration test lens
+      {"custom", MFT_CUSTOM, 2.6, GZ_PI, 320, 240},
+      {"equidistant", MFT_EQUIDISTANT, 3.0, 1.4, 320, 320},
+      // HFOV pi trips an assert in ogre2 (degenerate frustum)
+      {"stereographic", MFT_STEREOGRAPHIC, 3.0, 1.3, 320, 320},
+      {"equisolid", MFT_EQUISOLID_ANGLE, 2.8, 1.2, 480, 320},
+      {"orthographic", MFT_ORTHOGRAPHIC, 2.4, 1.0, 320, 320},
+    };
+    auto make = [&](ScenePtr _s, const Cfg &_c, const std::string &_name)
+    {
+      WideAngleCameraPtr cam = _s->CreateWideAngleCamera(_name);
+      CameraLens lens;
+      if (_c.type == MFT_CUSTOM)
+        lens.SetCustomMappingFunction(1.05, 4.0, AFT_TAN, 1.0, 0.0);
+      lens.SetType(_c.type);
+      lens.SetCutOffAngle(_c.cutoff);
+      lens.SetScaleToHFOV(true);
+      cam->SetLens(lens);
+      cam->SetHFOV(_c.hfov);
+      cam->SetImageWidth(_c.w);
+      cam->SetImageHeight(_c.h);
+      cam->SetAspectRatio(static_cast<double>(_c.w) / _c.h);
+      _s->RootVisual()->AddChild(cam);
+      return cam;
+    };
+
+    // lit main scene, for images worth looking at
+    _scene->SetAmbientLight(0.3, 0.3, 0.3);
+    _scene->SetBackgroundColor(0.35, 0.45, 0.6);
+    DirectionalLightPtr sun = _scene->CreateDirectionalLight();
+    sun->SetDirection(-0.5, 0.3, -1);
+    sun->SetDiffuseColor(0.9, 0.9, 0.85);
+    _scene->RootVisual()->AddChild(sun);
+    for (const auto &c : cfgs)
+    {
+      WideAngleCameraPtr cam = make(_scene, c, "wa_" + c.name);
+      cam->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+      Image img = cam->CreateImage();
+      cam->Capture(img);
+      WriteBytes(_dir, "wa_" + c.name + "_rgb", img.Data<uint8_t>(), c.w,
+          c.h, _index);
+      if (&c == &cfgs[0])
+      {
+        WideAngleCameraPtr l8 = make(_scene, c, "wa_l8cam");
+        l8->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+        l8->SetImageFormat(PF_L8);
+        Image mono = l8->CreateImage();
+        l8->Capture(mono);
+        std::vector<float> f(mono.Data<uint8_t>(),
+            mono.Data<uint8_t>() + c.w * c.h);
+        Write(_dir, "wa_l8", f.data(), c.w, c.h, 1, _index);
+      }
+    }
+
+    ScenePtr geom = _engine->CreateScene("wa_geom");
+    geom->SetAmbientLight(1, 1, 1);
+    std::vector<WideAngleCameraPtr> cams;
+    for (const auto &c : cfgs)
+    {
+      cams.push_back(make(geom, c, "wa_geom_" + c.name));
+      cams.back()->SetLocalPose({0, 0, 0, 0.1, 0.15, 0.3});
+    }
+
+    // cutoff circle: left / right crossing of half intensity, center row
+    std::ofstream cut(_dir + "/wa_cutoff.txt");
+    cut.precision(10);
+    geom->SetBackgroundColor(1, 1, 1);
+    for (size_t k = 0; k < cfgs.size(); ++k)
+    {
+      Image img = cams[k]->CreateImage();
+      cams[k]->Capture(img);
+      const unsigned int w = cfgs[k].w;
+      const uint8_t *row = img.Data<uint8_t>() + (cfgs[k].h / 2) * w * 3;
+      auto cross = [&](int _from, int _step)
+      {
+        for (int x = _from; x >= 0 && x + _step >= 0 &&
+             x + _step < static_cast<int>(w); x += _step)
+        {
+          const double a = Linear(row[x * 3]);
+          const double b = Linear(row[(x + _step) * 3]);
+          if (a >= 0.5 && b < 0.5)
+            return x + 0.5 + _step * (a - 0.5) / (a - b);
+        }
+        return -1.0;
+      };
+      const double left = cross(w / 2, -1);
+      const double right = cross(w / 2 - 1, 1);
+      cut << cfgs[k].name << " " << left << " " << right << " "
+          << (left < 0 || right < 0 ? -1.0 : (right - left) / 2) << "\n";
+    }
+
+    // spheres one at a time on black: centroid of the pixels brighter than
+    // half the brightest one, next to Project3d of the sphere center
+    geom->SetBackgroundColor(0, 0, 0);
+    const std::vector<math::Vector3d> points = {
+      {3, 0, 0}, {2, 2, 0.5}, {1, -2, 1}, {0.5, 1, -1.5}, {2, 0, 2},
+      {-0.5, 2.5, 0.3}, {1, -1.2, -1.2}};
+    std::ofstream out(_dir + "/wa_geom.txt");
+    out.precision(10);
+    MaterialPtr white = geom->CreateMaterial();
+    white->SetAmbient(1, 1, 1);
+    white->SetDiffuse(1, 1, 1);
+    // flat color, so the masks do not depend on the shading model
+    white->SetLightingEnabled(false);
+    for (size_t p = 0; p < points.size(); ++p)
+    {
+      VisualPtr v = geom->CreateVisual();
+      v->AddGeometry(geom->CreateSphere());
+      v->SetLocalPosition(points[p]);
+      v->SetLocalScale(0.6);
+      v->SetMaterial(white);
+      geom->RootVisual()->AddChild(v);
+      for (size_t k = 0; k < cfgs.size(); ++k)
+      {
+        Image img = cams[k]->CreateImage();
+        cams[k]->Capture(img);
+        const uint8_t *d = img.Data<uint8_t>();
+        const size_t n = static_cast<size_t>(cfgs[k].w) * cfgs[k].h;
+        int maxSum = 0;
+        for (size_t i = 0; i < n; ++i)
+          maxSum = std::max(maxSum, d[i * 3] + d[i * 3 + 1] + d[i * 3 + 2]);
+        double sx = 0, sy = 0, area = 0;
+        for (size_t i = 0; i < n && maxSum > 0; ++i)
+        {
+          if (2 * (d[i * 3] + d[i * 3 + 1] + d[i * 3 + 2]) > maxSum)
+          {
+            sx += i % cfgs[k].w + 0.5;
+            sy += i / cfgs[k].w + 0.5;
+            area += 1;
+          }
+        }
+        const math::Vector3d proj = cams[k]->Project3d(points[p]);
+        out << cfgs[k].name << " " << p << " "
+            << (area > 0 ? sx / area : -1) << " "
+            << (area > 0 ? sy / area : -1) << " " << area << " "
+            << proj.X() << " " << proj.Y() << " " << proj.Z() << "\n";
+      }
+      geom->DestroyVisual(v);
+    }
+  }
+
   struct DepthCfg
   {
     std::string name; math::Pose3d pose; unsigned int w, h;
@@ -252,6 +419,13 @@ int main(int _argc, char **_argv)
   BuildScene(scene);
   std::ofstream index(dir + "/index.txt");
   std::ofstream timing(dir + "/timing.txt");
+
+  if (std::getenv("PARITY_WIDEANGLE"))
+  {
+    WideAngle(engine, scene, dir, index);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
 
   {
     // RGB overview for eyeballing, not compared
