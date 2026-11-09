@@ -17,8 +17,14 @@
 #ifndef GZ_RENDERING_FILAMENT_FILAMENTMESH_HH_
 #define GZ_RENDERING_FILAMENT_FILAMENTMESH_HH_
 
+#include <chrono>
+#include <map>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <utils/Entity.h>
+
+#include <gz/common/Skeleton.hh>
 
 #include "gz/rendering/config.hh"
 #include "gz/rendering/base/BaseMesh.hh"
@@ -57,6 +63,38 @@ namespace gz
 
       public: virtual void PreRender() override;
 
+      // Documentation inherited (skeleton API, FilamentMeshSkeleton.cc)
+      public: virtual bool HasSkeleton() const override;
+
+      public: virtual std::map<std::string, math::Matrix4d>
+          SkeletonLocalTransforms() const override;
+
+      public: virtual void SetSkeletonLocalTransforms(
+          const std::map<std::string, math::Matrix4d> &_tfs) override;
+
+      public: virtual std::unordered_map<std::string, float>
+          SkeletonWeights() const override;
+
+      public: virtual void SetSkeletonWeights(
+          const std::unordered_map<std::string, float> &_weights) override;
+
+      public: virtual void SetSkeletonAnimationEnabled(
+          const std::string &_name, bool _enabled, bool _loop = true,
+          float _weight = 1.0) override;
+
+      public: virtual bool SkeletonAnimationEnabled(
+          const std::string &_name) const override;
+
+      public: virtual void UpdateSkeletonAnimation(
+          std::chrono::steady_clock::duration _time) override;
+
+      /// \brief Set up the bone state of a skinned mesh (mesh factory);
+      /// _gpu: the renderable was built with skinning(bone count)
+      public: void InitSkeleton(common::SkeletonPtr _skeleton, bool _gpu);
+
+      /// \brief Upload the bone matrices if the pose changed
+      private: void UpdateBones();
+
       /// \brief Temporarily render every submesh with _instance
       public: void OverrideMaterial(filament::MaterialInstance *_instance);
 
@@ -88,6 +126,11 @@ namespace gz
       protected: ::utils::Entity entity;
 
       protected: FilamentSubMeshStorePtr subMeshes;
+
+      /// \brief Bone and animation state, null without a skeleton
+      private: struct SkeletonState;
+      /// (shared_ptr: deletable where SkeletonState is incomplete)
+      private: std::shared_ptr<SkeletonState> skeleton;
 
       private: friend class FilamentScene;
       private: friend class FilamentMeshFactory;

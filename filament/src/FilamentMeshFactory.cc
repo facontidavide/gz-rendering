@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -35,6 +36,7 @@
 #include <gz/common/Console.hh>
 #include <gz/common/Material.hh>
 #include <gz/common/Mesh.hh>
+#include <gz/common/Skeleton.hh>
 #include <gz/common/SubMesh.hh>
 
 #include "gz/rendering/Material.hh"
@@ -86,6 +88,7 @@ namespace
   using filament::math::float4;
   using filament::math::quatf;
   using filament::math::uint3;
+  using filament::math::ushort4;
 
   template <typename T>
   void FreeBuffer(void *_buf, size_t, void *)
@@ -148,6 +151,18 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
 
   float3 bmin{std::numeric_limits<float>::max()};
   float3 bmax{std::numeric_limits<float>::lowest()};
+
+  // skinned mesh: GPU skinning for up to filament's 255 bones
+  const common::SkeletonPtr skel =
+      common.HasSkeleton() ? common.MeshSkeleton() : nullptr;
+  const bool skinned = skel && skel->NodeCount() > 0u &&
+      skel->NodeCount() <= 255u;
+  if (skel && !skinned)
+  {
+    gzwarn << "Mesh [" << _desc.meshName << "] has " << skel->NodeCount()
+           << " bones, more than filament skins: drawn in bind pose"
+           << std::endl;
+  }
 
   for (unsigned int i = 0; i < common.SubMeshCount(); ++i)
   {
@@ -253,19 +268,63 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
 
       using AT = filament::VertexBuffer::AttributeType;
       using VA = filament::VertexAttribute;
-      geom->vb = filament::VertexBuffer::Builder()
-          .vertexCount(nv)
-          .bufferCount(3)
+      filament::VertexBuffer::Builder vbb;
+      vbb.vertexCount(nv)
+          .bufferCount(skinned ? 5 : 3)
           .attribute(VA::POSITION, 0, AT::FLOAT3)
           .attribute(VA::TANGENTS, 1, AT::FLOAT4)
-          .attribute(VA::UV0, 2, AT::FLOAT2)
-          .build(*engine);
+          .attribute(VA::UV0, 2, AT::FLOAT2);
+      if (skinned)
+      {
+        vbb.attribute(VA::BONE_INDICES, 3, AT::USHORT4)
+            .attribute(VA::BONE_WEIGHTS, 4, AT::FLOAT4);
+      }
+      geom->vb = vbb.build(*engine);
       geom->vb->setBufferAt(*engine, 0, filament::VertexBuffer::BufferDescriptor(
           pos, sizeof(float3) * nv, &FreeBuffer<float3>));
       geom->vb->setBufferAt(*engine, 1, filament::VertexBuffer::BufferDescriptor(
           tangents, sizeof(float4) * nv, &FreeBuffer<float4>));
       geom->vb->setBufferAt(*engine, 2, filament::VertexBuffer::BufferDescriptor(
           uv, sizeof(float2) * nv, &FreeBuffer<float2>));
+      if (skinned)
+      {
+        // like ogre2 (v1 _rationaliseBoneAssignments): the 4 largest
+        // influences, renormalized; a vertex without any follows bone 0.
+        // Bone index = skeleton node handle, as in FilamentMesh::InitSkeleton
+        std::vector<std::vector<std::pair<float, uint16_t>>> infl(nv);
+        for (unsigned int j = 0; j < s->NodeAssignmentsCount(); ++j)
+        {
+          const common::NodeAssignment na = s->NodeAssignmentByIndex(j);
+          if (na.vertexIndex < nv && na.nodeIndex < skel->NodeCount())
+            infl[na.vertexIndex].push_back(
+                {na.weight, static_cast<uint16_t>(na.nodeIndex)});
+        }
+        auto *bones = new ushort4[nv];
+        auto *weights = new float4[nv];
+        for (unsigned int j = 0; j < nv; ++j)
+        {
+          auto &l = infl[j];
+          std::sort(l.begin(), l.end(), std::greater<>());
+          l.resize(std::min<size_t>(l.size(), 4u));
+          float total = 0.0f;
+          for (const auto &w : l)
+            total += w.first;
+          bones[j] = ushort4{0u};
+          weights[j] = l.empty() || total <= 0.0f ?
+              float4{1.0f, 0.0f, 0.0f, 0.0f} : float4{0.0f};
+          for (size_t k = 0; k < l.size() && total > 0.0f; ++k)
+          {
+            bones[j][k] = l[k].second;
+            weights[j][k] = l[k].first / total;
+          }
+        }
+        geom->vb->setBufferAt(*engine, 3,
+            filament::VertexBuffer::BufferDescriptor(
+            bones, sizeof(ushort4) * nv, &FreeBuffer<ushort4>));
+        geom->vb->setBufferAt(*engine, 4,
+            filament::VertexBuffer::BufferDescriptor(
+            weights, sizeof(float4) * nv, &FreeBuffer<float4>));
+      }
 
       geom->ib = filament::IndexBuffer::Builder()
           .indexCount(ni)
@@ -314,6 +373,12 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
     return false;
   }
 
+  // ogre2 bounds animated skinned meshes by a fixed -1..1 box
+  if (skel && skel->AnimationCount() != 0u)
+  {
+    bmin = float3{-1.0f};
+    bmax = float3{1.0f};
+  }
   filament::Box box;
   box.set(bmin, bmax);
   filament::RenderableManager::Builder builder(prims.size());
@@ -321,6 +386,8 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
       .culling(true)
       .castShadows(true)
       .receiveShadows(true);
+  if (skinned)
+    builder.skinning(skel->NodeCount());
   for (size_t i = 0; i < prims.size(); ++i)
   {
     builder.geometry(i, prims[i].type, prims[i].sub->vertexBuffer,
@@ -338,5 +405,7 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
     p.sub->SetMaterial(p.material, false);
     p.sub->ownsMaterial = true;
   }
+  if (skel)
+    _mesh->InitSkeleton(skel, skinned);
   return true;
 }

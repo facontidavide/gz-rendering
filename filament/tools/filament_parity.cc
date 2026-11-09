@@ -33,6 +33,11 @@
 // depth + point cloud, thermal), see Noise()
 // PARITY_PROJECTION=1: only custom (off-center intrinsics) and orthographic
 // projections on depth, bbox and RGB cameras, see Projection()
+// PARITY_ACTOR=1: adds two skinned walking actors (test/media/meshes/
+// walk.dae) posed at a fixed animation time, one through the animation API
+// (with a bone weight) and one through SetSkeletonLocalTransforms; writes
+// actor.txt: ogre2's visible-2D boxes draw actors in bind pose (see
+// parity_compare.py)
 
 #include <algorithm>
 #include <chrono>
@@ -53,6 +58,8 @@
 #include <gz/common/geospatial/ImageHeightmap.hh>
 #include <gz/common/Mesh.hh>
 #include <gz/common/MeshManager.hh>
+#include <gz/common/Skeleton.hh>
+#include <gz/common/SkeletonAnimation.hh>
 #include <gz/math/Pose3.hh>
 
 #include <gz/rendering/BoundingBoxCamera.hh>
@@ -62,6 +69,7 @@
 #include <gz/rendering/GaussianNoisePass.hh>
 #include <gz/rendering/Heightmap.hh>
 #include <gz/rendering/Light.hh>
+#include <gz/rendering/Mesh.hh>
 #include <gz/rendering/Image.hh>
 #include <gz/rendering/GpuRays.hh>
 #include <gz/rendering/RenderEngine.hh>
@@ -83,7 +91,7 @@ namespace
   /// \brief Counter used to give every other object a segmentation label
   int g_added = 0;
 
-  void Add(ScenePtr _scene, GeometryPtr _geom, const math::Pose3d &_pose,
+  VisualPtr Add(ScenePtr _scene, GeometryPtr _geom, const math::Pose3d &_pose,
       const math::Vector3d &_scale)
   {
     VisualPtr v = _scene->CreateVisual();
@@ -102,6 +110,7 @@ namespace
     if (g_added % 3 == 0)
       v->SetUserData("temperature", 280.0f + 7.3f * g_added);
     _scene->RootVisual()->AddChild(v);
+    return v;
   }
 
   void Write(const std::string &_dir, const std::string &_name,
@@ -239,6 +248,48 @@ namespace
       if (k % 2 == 0)
         v->SetUserData("temperature", 300.0f + 4.1f * k);
       _scene->RootVisual()->AddChild(v);
+    }
+
+    // PARITY_ACTOR=1: the two ways gz-sim poses an actor, at a fixed time
+    if (std::getenv("PARITY_ACTOR"))
+    {
+      MeshDescriptor desc(std::string(PROJECT_SOURCE_PATH) +
+          "/test/media/meshes/walk.dae");
+      desc.mesh = common::MeshManager::Instance()->Load(desc.meshName);
+      common::SkeletonPtr skel = desc.mesh ? desc.mesh->MeshSkeleton() :
+          nullptr;
+      if (!skel || skel->AnimationCount() == 0)
+      {
+        std::cerr << "cannot load " << desc.meshName << std::endl;
+        return;
+      }
+      // animation API as gz-sim's RenderUtil with trajectory following:
+      // root at weight 0 and set by hand; plus a bone at half weight
+      MeshPtr walking = _scene->CreateMesh(desc);
+      const std::string anim = skel->Animation(0)->Name();
+      const std::string root = skel->RootNode()->Name();
+      walking->SetSkeletonAnimationEnabled(anim, true, true, 1.0);
+      walking->SetSkeletonWeights({{root, 0.0f},
+          {skel->NodeByHandle(skel->NodeCount() / 2)->Name(), 0.5f}});
+      walking->UpdateSkeletonAnimation(std::chrono::milliseconds(730));
+      math::Matrix4d rootTf = skel->RootNode()->Transform();
+      rootTf.SetTranslation(rootTf.Translation() + math::Vector3d(0, 0.1, 0));
+      walking->SetSkeletonLocalTransforms({{root, rootTf}});
+      // feet on the floor, both actors fully inside the depthA / bbox view
+      const double z = -desc.mesh->Min().Z();
+      Add(_scene, walking, {1.8, 0.1, z, 0, 0, GZ_PI / 2}, {1, 1, 1});
+      // explicit local bone transforms, as in MeshTest.MeshSkeleton
+      MeshPtr posed = _scene->CreateMesh(desc);
+      std::map<std::string, math::Matrix4d> tfs;
+      for (const auto &[name, tf] : skel->Animation(0)->PoseAt(1.1, true))
+      {
+        tfs[skel->NodeNameAnimToSkin(0, name)] =
+            skel->AlignTranslation(0, name) * tf *
+            skel->AlignRotation(0, name);
+      }
+      posed->SetSkeletonLocalTransforms(tfs);
+      Add(_scene, posed, {2.1, -0.5, z, 0, 0, 0.5}, {1, 1, 1})
+          ->SetUserData("label", 6);
     }
   }
 
@@ -993,6 +1044,8 @@ int main(int _argc, char **_argv)
     return 1;
   ScenePtr scene = engine->CreateScene("scene");
   BuildScene(scene);
+  if (std::getenv("PARITY_ACTOR"))
+    std::ofstream(dir + "/actor.txt") << "PARITY_ACTOR=1\n";
   std::ofstream index(dir + "/index.txt");
   std::ofstream timing(dir + "/timing.txt");
 
