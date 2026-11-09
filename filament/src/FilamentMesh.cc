@@ -24,6 +24,10 @@
 #include <utils/EntityManager.h>
 
 #include <gz/common/Console.hh>
+#include <gz/common/Mesh.hh>
+#include <gz/common/SubMesh.hh>
+
+#include "gz/rendering/MeshDescriptor.hh"
 
 #include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
@@ -177,6 +181,10 @@ FilamentSubMesh::~FilamentSubMesh()
 void FilamentSubMesh::Destroy()
 {
   BaseSubMesh::Destroy();
+  // the renderable is gone already (FilamentMesh::Destroy)
+  if (this->lineBuffer && Engine())
+    Engine()->destroy(this->lineBuffer);
+  this->lineBuffer = nullptr;
   this->geometry.reset();
   this->vertexBuffer = nullptr;
   this->indexBuffer = nullptr;
@@ -198,6 +206,61 @@ void FilamentMesh::PreRender()
   auto &rm = Engine()->getRenderableManager();
   if (rm.hasComponent(this->entity))
     rm.setCastShadows(rm.getInstance(this->entity), cast);
+}
+
+//////////////////////////////////////////////////
+void FilamentMesh::SetWireframe(bool _wireframe)
+{
+  auto *engine = Engine();
+  auto &rm = engine->getRenderableManager();
+  if (!rm.hasComponent(this->entity))
+    return;
+  auto inst = rm.getInstance(this->entity);
+  MeshDescriptor desc = this->meshDescriptor;
+  desc.Load();
+  using PT = filament::RenderableManager::PrimitiveType;
+  for (auto it = this->subMeshes->Begin(); it != this->subMeshes->End(); ++it)
+  {
+    FilamentSubMeshPtr sub = *it;
+    if (!sub->indexBuffer)
+      continue;
+    if (!_wireframe)
+    {
+      if (!sub->lineBuffer)
+        continue;
+      rm.setGeometryAt(inst, sub->index, PT::TRIANGLES, sub->vertexBuffer,
+          sub->indexBuffer, 0, sub->indexBuffer->getIndexCount());
+      engine->destroy(sub->lineBuffer);
+      sub->lineBuffer = nullptr;
+      continue;
+    }
+    if (sub->lineBuffer || !desc.mesh)
+      continue;
+    auto s = desc.mesh->SubMeshByIndex(sub->subMeshIndex).lock();
+    if (!s || s->SubMeshPrimitiveType() != common::SubMesh::TRIANGLES)
+      continue;
+    // each triangle's three edges (shared edges drawn twice)
+    const unsigned int tris = s->IndexCount() / 3u;
+    auto *idx = new uint32_t[tris * 6u];
+    for (unsigned int t = 0; t < tris; ++t)
+    {
+      for (unsigned int e = 0; e < 3u; ++e)
+      {
+        idx[t * 6u + e * 2u] = static_cast<uint32_t>(s->Index(t * 3u + e));
+        idx[t * 6u + e * 2u + 1u] =
+            static_cast<uint32_t>(s->Index(t * 3u + (e + 1u) % 3u));
+      }
+    }
+    sub->lineBuffer = filament::IndexBuffer::Builder()
+        .indexCount(tris * 6u)
+        .bufferType(filament::IndexBuffer::IndexType::UINT)
+        .build(*engine);
+    sub->lineBuffer->setBuffer(*engine,
+        filament::IndexBuffer::BufferDescriptor(idx, tris * 6u * 4u,
+        [](void *_b, size_t, void *) { delete[] static_cast<uint32_t *>(_b); }));
+    rm.setGeometryAt(inst, sub->index, PT::LINES, sub->vertexBuffer,
+        sub->lineBuffer, 0, tris * 6u);
+  }
 }
 
 //////////////////////////////////////////////////

@@ -40,9 +40,8 @@ namespace gz
 
       public: virtual void SetVisibilityFlags(uint32_t _flags) override;
 
-      /// \brief Wireframe flag. ponytail: stored only, filament has no
-      /// wireframe raster mode; draw a LINES index buffer per submesh if
-      /// wireframe rendering is needed.
+      /// \brief Draw this visual's meshes as edges (filament has no
+      /// wireframe raster mode)
       public: virtual void SetWireframe(bool _show) override;
 
       public: virtual math::AxisAlignedBox LocalBoundingBox() const override;

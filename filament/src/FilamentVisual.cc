@@ -27,6 +27,7 @@
 #include "gz/rendering/filament/FilamentGeometry.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
+#include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentVisual.hh"
 #include "gz/rendering/Utils.hh"
 
@@ -66,7 +67,14 @@ void FilamentVisual::SetVisibilityFlags(uint32_t _flags)
 //////////////////////////////////////////////////
 void FilamentVisual::SetWireframe(bool _show)
 {
+  // like ogre2: this visual's own geometries only
   this->wireframe = _show;
+  for (auto it = this->geometries->Begin(); it != this->geometries->End(); ++it)
+  {
+    auto mesh = std::dynamic_pointer_cast<FilamentMesh>(*it);
+    if (mesh)
+      mesh->SetWireframe(_show);
+  }
 }
 
 //////////////////////////////////////////////////

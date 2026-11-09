@@ -303,6 +303,7 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
     sub->geometry = geom;
     sub->mesh = _mesh.get();
     sub->index = prims.size();
+    sub->subMeshIndex = i;
 
     // material: from the imported mesh if any, else a default one
     MaterialPtr material;
