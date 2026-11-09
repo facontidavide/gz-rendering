@@ -49,6 +49,9 @@ void FilamentCapsule::Destroy()
     this->mesh->Destroy();
     this->mesh.reset();
   }
+  // after the mesh: filament panics on destroying a material in use
+  if (this->material && this->ownsMaterial && this->Scene())
+    this->Scene()->DestroyMaterial(this->material);
   this->material.reset();
   FilamentGeometry::Destroy();
 }
@@ -81,18 +84,23 @@ void FilamentCapsule::SetLayers(uint8_t _layers)
 //////////////////////////////////////////////////
 MaterialPtr FilamentCapsule::Material() const
 {
-  return this->mesh ? this->mesh->Material() : this->material;
+  return this->material;
 }
 
 //////////////////////////////////////////////////
 void FilamentCapsule::SetMaterial(MaterialPtr _material, bool _unique)
 {
-  // the inner mesh owns the clone when _unique; keep the source material
-  // to re-apply it when the mesh is rebuilt
-  this->material = _material;
-  this->unique = _unique;
-  if (this->mesh && _material)
-    this->mesh->SetMaterial(_material, _unique);
+  // the capsule owns the clone (not the inner mesh) so it survives mesh
+  // rebuilds along with any edit made through Material()
+  if (!_material)
+    return;
+  MaterialPtr old = this->ownsMaterial ? this->material : nullptr;
+  this->material = _unique ? _material->Clone() : _material;
+  this->ownsMaterial = _unique;
+  if (this->mesh)
+    this->mesh->SetMaterial(this->material, false);
+  if (old && old != this->material && this->Scene())
+    this->Scene()->DestroyMaterial(old);
 }
 
 //////////////////////////////////////////////////
@@ -134,7 +142,7 @@ void FilamentCapsule::Update()
   this->mesh = std::dynamic_pointer_cast<FilamentMesh>(
       this->Scene()->CreateMesh(desc));
   if (this->mesh && this->material)
-    this->mesh->SetMaterial(this->material, this->unique);
+    this->mesh->SetMaterial(this->material, false);
 
   if (visual && this->mesh)
     visual->AttachGeometry(self);

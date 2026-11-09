@@ -60,7 +60,8 @@ namespace gz
 
       private: MaterialPtr material;
 
-      private: bool unique{true};
+      /// \brief True when material is a clone made by SetMaterial
+      private: bool ownsMaterial{false};
 
       private: friend class FilamentScene;
     };

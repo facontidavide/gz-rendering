@@ -86,6 +86,19 @@ TEST_F(CapsuleTest, Capsule)
   EXPECT_DOUBLE_EQ(clonedMaterial->Transparency(),
       originalMaterial->Transparency());
 
+  // resize while attached to a visual: the geometry is rebuilt on the next
+  // render, edits made through Material() survive, the bounding box grows
+  VisualPtr visual = scene->CreateVisual();
+  scene->RootVisual()->AddChild(visual);
+  visual->AddGeometry(capsule);
+  capsule->Material()->SetDiffuse(0.1, 0.2, 0.3);
+  scene->PreRender();
+  const double before = visual->BoundingBox().Size().Z();
+  capsule->SetRadius(1.0);
+  scene->PreRender();
+  EXPECT_EQ(math::Color(0.1f, 0.2f, 0.3f), capsule->Material()->Diffuse());
+  EXPECT_GT(visual->BoundingBox().Size().Z(), before + 0.5);
+
   // Clean up
   engine->DestroyScene(scene);
 }
