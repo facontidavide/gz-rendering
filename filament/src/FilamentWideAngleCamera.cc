@@ -271,7 +271,7 @@ void FilamentWideAngleCamera::Render()
   this->camera->setProjection(90.0, 1.0, this->NearClipPlane(),
       this->FarClipPlane(), filament::Camera::Fov::HORIZONTAL);
   this->view->setVisibleLayers(0xff,
-      FilamentConversions::ToLayers(this->VisibilityMask()));
+      FilamentConversions::MaskToLayers(this->VisibilityMask()));
   if (this->atlas->Width() != 6u * n || this->atlas->Height() != n)
   {
     this->atlas->SetWidth(6u * n);

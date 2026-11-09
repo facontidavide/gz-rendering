@@ -203,7 +203,7 @@ void FilamentCamera::Render()
   const math::Color bg = this->scene->BackgroundColor();
   this->renderTexture->SetClearColor(FilamentConversions::ToFloat4(bg));
   this->view->setVisibleLayers(0xff,
-      FilamentConversions::ToLayers(this->VisibilityMask()));
+      FilamentConversions::MaskToLayers(this->VisibilityMask()));
   this->renderTexture->Render(this->view);
   this->renderTexture->ApplyRenderPasses(this->renderTexture->RenderPasses());
 }

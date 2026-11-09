@@ -125,7 +125,7 @@ void FilamentDepthCamera::Render()
       this->FarClipPlane() * kFarScale);
 
   this->view->setVisibleLayers(0xff,
-      FilamentConversions::ToLayers(this->VisibilityMask()));
+      FilamentConversions::MaskToLayers(this->VisibilityMask()));
 
   // Color pass, only needed for the colored point cloud
   if (this->newRgbPointCloud.ConnectionCount() > 0u)

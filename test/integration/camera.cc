@@ -509,6 +509,26 @@ TEST_F(CameraTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(Visibility))
   EXPECT_EQ(gBSum, 0u);
   EXPECT_EQ(bBSum, 0u);
 
+  // a mask with every bit but visualA's (like ~GZ_VISIBILITY_GUI) hides
+  // visualA and shows visualB
+  CameraPtr cameraC = scene->CreateCamera();
+  ASSERT_NE(nullptr, cameraC);
+  cameraC->SetWorldPosition(-1, 0, 0);
+  cameraC->SetVisibilityMask(~0x01u);
+  root->AddChild(cameraC);
+  Image imageC = cameraC->CreateImage();
+  cameraC->Capture(imageC);
+  unsigned char *dataC = imageC.Data<unsigned char>();
+  unsigned int rCSum = 0u;
+  unsigned int gCSum = 0u;
+  for (unsigned int i = 0; i < height * step; i += bpp)
+  {
+    rCSum += dataC[i];
+    gCSum += dataC[i + 1];
+  }
+  EXPECT_GT(rCSum, 0u);
+  EXPECT_EQ(gCSum, 0u);
+
   // Clean up
   engine->DestroyScene(scene);
 }

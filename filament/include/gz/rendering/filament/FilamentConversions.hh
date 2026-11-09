@@ -77,43 +77,69 @@ namespace gz
       /// 0x00100000, ogre2's Ogre2ParticleEmitter::kParticleVisibilityFlags.
       constexpr uint8_t kParticleLayer = 0x80u;
 
-      /// \brief gz visibility flags (32 bits) to filament layers (8 bits).
-      /// Each gz bit gets its own layer the first time it is seen; the
-      /// particle bit always maps to kParticleLayer.
+      /// \brief gz bit of particle emitters (ogre2's kParticleVisibilityFlags)
+      constexpr uint32_t kParticleFlag = 0x00100000u;
+
+      /// \brief Distinct visual flag values in use; entry i is the value
+      /// drawn on filament layer i. Entry 7 is the particle value.
+      /// ponytail: process-wide and first come; a value past the 7th distinct
+      /// one shares layer 6 (its entry becomes the OR of the values), so
+      /// scenes with more than 7 distinct visual flag values can
+      /// over-render. Upgrade to a per-scene table with re-layering if that
+      /// ever matters.
+      inline std::array<uint32_t, 8> &LayerValues()
+      {
+        static std::array<uint32_t, 8> values = [] {
+          std::array<uint32_t, 8> v{};
+          v[7] = kParticleFlag;
+          return v;
+        }();
+        return values;
+      }
+
+      /// \brief Filament layer of a visual with gz visibility flags _flags.
+      /// gz draws a visual when (flags & cameraMask) != 0; giving each
+      /// distinct flag value its own layer keeps that test exact for any
+      /// mask, including masks with most bits set such as ~GZ_VISIBILITY_GUI.
       inline uint8_t ToLayers(uint32_t _flags)
       {
-        // Values with many bits set (GZ_VISIBILITY_ALL and friends) mean
-        // "everything": all layers, without allocating any.
-        if (__builtin_popcount(_flags) > 8)
-          return 0xffu;
-        // ponytail: process-wide first-come allocation of gz bits to the
-        // filament layers 0..6; bits past the 6th distinct one share layer
-        // 6, so scenes using more than 6 distinct bits can over-render.
-        // Upgrade to a per-scene table with re-layering if that ever matters.
-        static std::array<int8_t, 32> layerOf = [] {
-          std::array<int8_t, 32> a{};
-          a.fill(-1);
-          return a;
-        }();
-        static int8_t nextLayer = 0;
-        constexpr uint32_t kParticleFlag = 0x00100000u;
-        uint8_t layers = (_flags & kParticleFlag) ? kParticleLayer : 0u;
-        for (int b = 0; b < 32; ++b)
+        if (_flags == 0u)
+          return 0u;
+        if (_flags == kParticleFlag)
+          return kParticleLayer;
+        auto &values = LayerValues();
+        for (int i = 0; i < 7; ++i)
         {
-          if (!(_flags & (1u << b)) || (1u << b) == kParticleFlag)
-            continue;
-          if (layerOf[b] < 0)
-            layerOf[b] = nextLayer < 6 ? nextLayer++ : 6;
-          layers |= static_cast<uint8_t>(1u << layerOf[b]);
+          if (values[i] == _flags)
+            return static_cast<uint8_t>(1u << i);
+          if (values[i] == 0u)
+          {
+            values[i] = _flags;
+            return static_cast<uint8_t>(1u << i);
+          }
         }
+        values[6] |= _flags;
+        return 1u << 6;
+      }
+
+      /// \brief Filament layers a camera with gz visibility mask _mask sees:
+      /// every layer whose visual flag value intersects the mask. Call it
+      /// per render, after visuals have registered their flags.
+      inline uint8_t MaskToLayers(uint32_t _mask)
+      {
+        const auto &values = LayerValues();
+        uint8_t layers = 0u;
+        for (int i = 0; i < 8; ++i)
+          if (values[i] & _mask)
+            layers |= static_cast<uint8_t>(1u << i);
         return layers;
       }
 
       /// \brief Layers seen by sensors that do not render particles as
       /// geometry (depth, lidar, thermal, segmentation, bounding boxes)
-      inline uint8_t ToSensorLayers(uint32_t _flags)
+      inline uint8_t ToSensorLayers(uint32_t _mask)
       {
-        return ToLayers(_flags) & static_cast<uint8_t>(~kParticleLayer);
+        return MaskToLayers(_mask) & static_cast<uint8_t>(~kParticleLayer);
       }
 
       /// \brief sRGB transfer function, for values written outside of a
