@@ -403,22 +403,12 @@ void FilamentGpuRays::Render()
   const auto &meshes = this->scene->Meshes();
   for (FilamentMesh *m : meshes)
     m->OverrideMaterial(this->depthInstance);
-  // every used face into its own atlas slot, then a single readback: the
-  // first pass clears the whole attachment, the others keep it
   auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
-  unsigned int slot = 0u;
-  for (int f = 0; f < 6; ++f)
-  {
-    if (!this->faceUsed[f])
-      continue;
-    tm.setTransform(camInst, FaceTransform(kFaces[f]));
-    const filament::Viewport vp{static_cast<int32_t>(slot * n), 0, n, n};
-    this->renderTexture->Render(this->view, &vp, slot == 0u);
-    ++slot;
-  }
-  // second pass: one fragment per ray samples the atlas, only the scan is
-  // read back (the atlas is up to 6 MB, a VLP-16 scan 115 KB)
+  // second pass setup: one fragment per ray samples the atlas, only the
+  // scan is read back (the atlas is up to 6 MB, a VLP-16 scan 115 KB).
+  // Parameters are set before the frame opens: a frame commits material
+  // instances once, at its start.
   const unsigned int hCount = std::max(this->RangeCount(), 1);
   const unsigned int vCount = std::max(this->VerticalRangeCount(), 1);
   this->sampleInstance->setParameter("atlas",
@@ -432,7 +422,24 @@ void FilamentGpuRays::Render()
     this->scanTexture->SetHeight(vCount);
   }
   this->scanTexture->PreRender();
+
+  // every used face into its own atlas slot, then the sample pass, all in
+  // one frame: one submit instead of one standalone frame per pass, which
+  // costs about 0.6 ms each on NVIDIA Vulkan. The first face pass clears
+  // the whole attachment, the others keep it.
+  FilamentRenderEngine::Instance()->BeginFrame();
+  unsigned int slot = 0u;
+  for (int f = 0; f < 6; ++f)
+  {
+    if (!this->faceUsed[f])
+      continue;
+    tm.setTransform(camInst, FaceTransform(kFaces[f]));
+    const filament::Viewport vp{static_cast<int32_t>(slot * n), 0, n, n};
+    this->renderTexture->Render(this->view, &vp, slot == 0u);
+    ++slot;
+  }
   this->scanTexture->Render(this->sampleView);
+  FilamentRenderEngine::Instance()->EndFrame();
   this->ranges.resize(static_cast<size_t>(hCount) * vCount);
   renderer->readPixels(this->scanTexture->Native(), 0, 0, hCount, vCount,
       filament::backend::PixelBufferDescriptor(this->ranges.data(),
