@@ -1,0 +1,27 @@
+// gz-rendering default lit material: diffuse color (optionally textured),
+// roughness/metallic workflow.
+material {
+    name : gz_lit,
+    shadingModel : lit,
+    requires : [ uv0 ],
+    parameters : [
+        { type : float4,    name : baseColor },
+        { type : float,     name : roughness },
+        { type : float,     name : metallic },
+        { type : int,       name : hasTexture },
+        { type : sampler2d, name : baseColorMap }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec4 c = materialParams.baseColor;
+        if (materialParams.hasTexture != 0) {
+            c *= texture(materialParams_baseColorMap, getUV0());
+        }
+        material.baseColor = c;
+        material.roughness = materialParams.roughness;
+        material.metallic = materialParams.metallic;
+    }
+}

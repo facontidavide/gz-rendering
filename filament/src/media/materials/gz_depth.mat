@@ -1,0 +1,17 @@
+// Depth sensor material: writes the linear view-space depth (distance along
+// the camera's optical axis, in meters) into the red channel of a float
+// render target.
+material {
+    name : gz_depth,
+    shadingModel : unlit,
+    blending : opaque,
+    depthWrite : true
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec4 viewPos = getViewFromWorldMatrix() * vec4(getWorldPosition(), 1.0);
+        material.baseColor = vec4(-viewPos.z, 0.0, 0.0, 1.0);
+    }
+}
