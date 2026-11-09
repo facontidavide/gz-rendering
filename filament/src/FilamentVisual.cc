@@ -64,6 +64,12 @@ void FilamentVisual::SetVisibilityFlags(uint32_t _flags)
 }
 
 //////////////////////////////////////////////////
+void FilamentVisual::SetWireframe(bool _show)
+{
+  this->wireframe = _show;
+}
+
+//////////////////////////////////////////////////
 void FilamentVisual::UpdateLayers()
 {
   const uint8_t layers = this->visible ?
