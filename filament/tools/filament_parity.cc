@@ -236,7 +236,8 @@ namespace
   /// area of every sphere rendered alone on black next to Project3d of its
   /// center (wa_geom.txt), and an L8 image of the first lens (wa_l8).
   void WideAngle(RenderEngine *_engine, ScenePtr _scene,
-      const std::string &_dir, std::ofstream &_index)
+      const std::string &_dir, std::ofstream &_index,
+      std::ofstream &_timing, int _frames)
   {
     struct Cfg
     {
@@ -282,7 +283,9 @@ namespace
       WideAngleCameraPtr cam = make(_scene, c, "wa_" + c.name);
       cam->SetLocalPose({0, 0, 1, 0, 0.2, 0});
       Image img = cam->CreateImage();
-      cam->Capture(img);
+      auto tm = Time([&] { cam->Capture(img); }, _frames);
+      _timing << "wa_" << c.name << " " << tm.first << " " << tm.second
+              << "\n";
       WriteBytes(_dir, "wa_" + c.name + "_rgb", img.Data<uint8_t>(), c.w,
           c.h, _index);
       if (&c == &cfgs[0])
@@ -422,7 +425,7 @@ int main(int _argc, char **_argv)
 
   if (std::getenv("PARITY_WIDEANGLE"))
   {
-    WideAngle(engine, scene, dir, index);
+    WideAngle(engine, scene, dir, index, timing, frames);
     std::cout << "wrote " << dir << std::endl;
     return 0;
   }
