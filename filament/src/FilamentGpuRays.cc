@@ -24,6 +24,8 @@
 #include <filament/Engine.h>
 #include <filament/Material.h>
 #include <filament/MaterialInstance.h>
+#include <backend/PixelBufferDescriptor.h>
+#include <filament/Renderer.h>
 #include <filament/TransformManager.h>
 #include <filament/View.h>
 #include <utils/EntityManager.h>
@@ -240,8 +242,12 @@ void FilamentGpuRays::Render()
   this->view->setVisibleLayers(0xff,
       FilamentConversions::ToLayers(this->VisibilityMask()));
 
-  this->renderTexture->SetWidth(n);
-  this->renderTexture->SetHeight(n);
+  // SetWidth/SetHeight mark the target dirty (rebuilt in PreRender)
+  if (this->renderTexture->Width() != n)
+  {
+    this->renderTexture->SetWidth(n);
+    this->renderTexture->SetHeight(n);
+  }
   this->renderTexture->PreRender();
   const float inf = std::numeric_limits<float>::infinity();
   this->renderTexture->SetClearColor({inf, inf, inf, 1.0f});
@@ -252,17 +258,23 @@ void FilamentGpuRays::Render()
   const auto &meshes = this->scene->Meshes();
   for (FilamentMesh *m : meshes)
     m->OverrideMaterial(this->depthInstance);
-  Image img(n, n, PF_FLOAT32_R);
+  // queue every face's render and readback, then wait once
+  auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+  auto *renderer = FilamentRenderEngine::Instance()->Renderer();
   for (int f = 0; f < 6; ++f)
   {
     if (!this->faceUsed[f])
       continue;
     tm.setTransform(camInst, FaceTransform(kFaces[f]));
     this->renderTexture->Render(this->view);
-    this->renderTexture->Copy(img);
-    const float *src = img.Data<float>();
-    this->faceDepth[f].assign(src, src + static_cast<size_t>(n) * n);
+    this->faceDepth[f].resize(static_cast<size_t>(n) * n);
+    renderer->readPixels(this->renderTexture->Native(), 0, 0, n, n,
+        filament::backend::PixelBufferDescriptor(this->faceDepth[f].data(),
+        this->faceDepth[f].size() * sizeof(float),
+        filament::backend::PixelDataFormat::R,
+        filament::backend::PixelDataType::FLOAT));
   }
+  engine->flushAndWait();
   for (FilamentMesh *m : meshes)
     m->RestoreMaterials();
 }

@@ -50,7 +50,7 @@ namespace gz
       public: FilamentSceneStorePtr scenes;
       public: std::map<std::string, filament::Material *> materials;
       public: std::map<std::string, filament::Texture *> textures;
-      public: std::string backend{"vulkan"};
+      public: std::string backend{"opengl"};
       public: std::string resourcePath;
     };
     }
@@ -271,9 +271,12 @@ bool FilamentRenderEngine::LoadImpl(
 //////////////////////////////////////////////////
 bool FilamentRenderEngine::InitImpl()
 {
-  filament::Engine::Backend backend = filament::Engine::Backend::VULKAN;
-  if (this->dataPtr->backend == "opengl")
-    backend = filament::Engine::Backend::OPENGL;
+  // OpenGL by default: sensors are readback bound and filament's Vulkan
+  // readPixels allocates a staging buffer per call (~4 ms per readback on
+  // NVIDIA, vs ~0.3 ms on OpenGL). Vulkan stays available on request.
+  filament::Engine::Backend backend = filament::Engine::Backend::OPENGL;
+  if (this->dataPtr->backend == "vulkan")
+    backend = filament::Engine::Backend::VULKAN;
 
   this->dataPtr->engine = filament::Engine::Builder()
       .backend(backend)

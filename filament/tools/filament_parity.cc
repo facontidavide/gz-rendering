@@ -20,7 +20,8 @@
 // outputs plus per-sensor timings to <outdir>. Compare two engines with
 // filament/tools/parity_compare.py.
 //
-// usage: filament_parity <engine> <outdir> [timingFrames]
+// usage: filament_parity <engine> <outdir> [timingFrames] [engineParam]
+// engineParam is set to "1", e.g. "opengl" for filament
 
 #include <algorithm>
 #include <chrono>
@@ -28,6 +29,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -126,13 +128,16 @@ int main(int _argc, char **_argv)
 {
   if (_argc < 3)
   {
-    std::cerr << "usage: filament_parity <engine> <outdir> [frames]\n";
+    std::cerr << "usage: filament_parity <engine> <outdir> [frames] [param]\n";
     return 1;
   }
   common::Console::SetVerbosity(2);
   const std::string dir = _argv[2];
   const int frames = _argc > 3 ? std::atoi(_argv[3]) : 50;
-  RenderEngine *engine = rendering::engine(_argv[1]);
+  std::map<std::string, std::string> params;
+  if (_argc > 4)
+    params[_argv[4]] = "1";
+  RenderEngine *engine = rendering::engine(_argv[1], params);
   if (!engine)
     return 1;
   ScenePtr scene = engine->CreateScene("scene");
