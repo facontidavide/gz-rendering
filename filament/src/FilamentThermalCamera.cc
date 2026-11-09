@@ -26,9 +26,12 @@
 #include <filament/Material.h>
 #include <filament/MaterialInstance.h>
 #include <filament/Camera.h>
+#include <filament/Texture.h>
 #include <filament/View.h>
 
 #include <gz/common/Console.hh>
+#include <gz/common/Image.hh>
+#include <gz/common/Util.hh>
 
 #include "gz/rendering/Image.hh"
 #include "gz/rendering/Material.hh"
@@ -54,7 +57,7 @@ namespace
   }
 
   /// \brief "temperature" user data as Kelvin, -1 when absent or a string
-  /// (heat signature texture, unsupported)
+  /// (heat signature texture, see HeatSignatureInstance)
   float Temperature(const VisualPtr &_visual)
   {
     Variant v = _visual->UserData("temperature");
@@ -96,9 +99,18 @@ void FilamentThermalCamera::Destroy()
       engine->destroy(mi);
     for (auto &it : this->texturedInstances)
       engine->destroy(it.second);
+    for (auto &it : this->heatInstances)
+      engine->destroy(it.second);
+    for (auto &it : this->heatTextures)
+    {
+      if (it.second)
+        engine->destroy(it.second);
+    }
   }
   this->idInstances.clear();
   this->texturedInstances.clear();
+  this->heatInstances.clear();
+  this->heatTextures.clear();
   FilamentCamera::Destroy();
 }
 
@@ -170,6 +182,94 @@ filament::MaterialInstance *FilamentThermalCamera::TexturedInstance(
 }
 
 //////////////////////////////////////////////////
+filament::MaterialInstance *FilamentThermalCamera::HeatSignatureInstance(
+    const VisualPtr &_visual, const std::string &_texture)
+{
+  // ogre2 adds the texture's directory as a resource path and loads it by
+  // name: as a linear (not sRGB) texture without mipmaps
+  const std::string path = common::findFile(_texture);
+  auto texIt = this->heatTextures.find(path);
+  if (texIt == this->heatTextures.end())
+  {
+    filament::Texture *tex = nullptr;
+    common::Image img;
+    if (!path.empty())
+      img.Load(path);
+    const unsigned int w = img.Width();
+    const unsigned int h = img.Height();
+    const std::vector<unsigned char> rgba =
+        img.Valid() ? img.RGBAData() : std::vector<unsigned char>();
+    if (rgba.size() == static_cast<size_t>(w) * h * 4u && !rgba.empty())
+    {
+      auto &engine = *FilamentRenderEngine::Instance()->FilamentEngine();
+      // the shader reads red only. Rows are NOT flipped, unlike
+      // FilamentRenderEngine::Texture: with the mesh's flipped V that is
+      // the orientation ogre2's heat signature pass samples (checked with
+      // filament_parity PARITY_HEATSIG=1)
+      auto *buf = new unsigned char[static_cast<size_t>(w) * h];
+      for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i)
+        buf[i] = rgba[i * 4u];
+      tex = filament::Texture::Builder()
+          .width(w).height(h).levels(1)
+          .sampler(filament::Texture::Sampler::SAMPLER_2D)
+          .format(filament::Texture::InternalFormat::R8)
+          .build(engine);
+      filament::Texture::PixelBufferDescriptor desc(buf,
+          static_cast<size_t>(w) * h, filament::Texture::Format::R,
+          filament::Texture::Type::UBYTE,
+          [](void *_b, size_t, void *)
+          { delete[] static_cast<unsigned char *>(_b); });
+      tex->setImage(engine, 0, std::move(desc));
+    }
+    else
+    {
+      gzerr << "Unable to load heat signature texture [" << _texture
+            << "]" << std::endl;
+    }
+    texIt = this->heatTextures.emplace(path, tex).first;
+  }
+  if (!texIt->second)
+    return nullptr;
+
+  // like ogre2: the range applies only when both are float user data,
+  // otherwise the material defaults (0 and 100 K) stay
+  const int bitDepth = this->ImageFormat() == PF_L8 ? 8 : 16;
+  float minT = 0.0f;
+  float maxT = 100.0f;
+  const Variant minV = _visual->UserData("minTemp");
+  const Variant maxV = _visual->UserData("maxTemp");
+  const float *minF = std::get_if<float>(&minV);
+  const float *maxF = std::get_if<float>(&maxV);
+  if (minF && maxF)
+  {
+    minT = std::max(*minF, 0.0f);
+    maxT = std::min(*maxF, static_cast<float>(((1 << bitDepth) - 1.0) *
+        static_cast<double>(this->resolution)));
+  }
+  const auto key = std::make_tuple(path, minT, maxT, bitDepth,
+      this->resolution);
+  auto it = this->heatInstances.find(key);
+  if (it != this->heatInstances.end())
+    return it->second;
+  filament::Material *mat =
+      FilamentRenderEngine::Instance()->Material("gz_heat_signature");
+  if (!mat)
+    return nullptr;
+  filament::MaterialInstance *mi = mat->createInstance();
+  mi->setParameter("minTemp", minT);
+  mi->setParameter("maxTemp", maxT);
+  mi->setParameter("bitDepth", bitDepth);
+  mi->setParameter("resolution", this->resolution);
+  // ogre2's texture unit: bilinear, wrap, a single mip level
+  mi->setParameter("heatMap", texIt->second, filament::TextureSampler(
+      filament::TextureSampler::MinFilter::LINEAR,
+      filament::TextureSampler::MagFilter::LINEAR,
+      filament::TextureSampler::WrapMode::REPEAT));
+  this->heatInstances[key] = mi;
+  return mi;
+}
+
+//////////////////////////////////////////////////
 uint16_t FilamentThermalCamera::Encode(const float _rgba[4]) const
 {
   // float math in the order of thermal_camera_fs.glsl (rgbToTemp is
@@ -237,8 +337,29 @@ void FilamentThermalCamera::Render()
     if (!visual)
       continue;
     const float temp = Temperature(visual);
+    filament::MaterialInstance *heatSig = nullptr;
+    const Variant tempV = visual->UserData("temperature");
+    if (const auto *tex = std::get_if<std::string>(&tempV))
+    {
+      // ogre2's Terra has no heat signature support
+      if (mesh->terrain)
+      {
+        gzerr << "Heat Signature not yet supported by Heightmaps."
+              << std::endl;
+      }
+      else
+      {
+        heatSig = this->HeatSignatureInstance(visual, *tex);
+      }
+    }
     for (unsigned int i = 0; i < mesh->SubMeshCount(); ++i)
     {
+      if (heatSig)
+      {
+        // per pixel normalized temperature, alpha 0.5, see PostRender
+        mesh->OverrideMaterial(i, heatSig);
+        continue;
+      }
       float rgba[4];
       if (temp >= 0.0f)
       {
@@ -302,6 +423,13 @@ void FilamentThermalCamera::PostRender()
       // textured object: its color, converted like ogre2's shader does
       const float rgba[4] = {p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f,
           1.0f};
+      this->thermalImage[i] = this->Encode(rgba);
+      continue;
+    }
+    if (p[3] != 255u)
+    {
+      // heat signature: red is the normalized temperature
+      const float rgba[4] = {p[0] / 255.0f, 0.0f, 0.0f, 0.0f};
       this->thermalImage[i] = this->Encode(rgba);
       continue;
     }

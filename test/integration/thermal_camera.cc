@@ -218,7 +218,7 @@ TEST_F(ThermalCameraTest,
 TEST_F(ThermalCameraTest,
        GZ_UTILS_TEST_DISABLED_ON_WIN32(ThermalCameraBoxesHeatSignature))
 {
-  CHECK_SUPPORTED_ENGINE("ogre2");  // Only OGRE2 supports heat signatures
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
 
   int imgWidth = 50;
   int imgHeight = 50;
