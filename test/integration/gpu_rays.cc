@@ -1295,7 +1295,6 @@ TEST_F(GpuRaysTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(Heightmap))
     return;
   }
 #endif
-  CHECK_UNSUPPORTED_ENGINE("filament");
 
   // Test GPU rays heightmap detection
   const double hMinAngle = -GZ_PI / 8.0;
