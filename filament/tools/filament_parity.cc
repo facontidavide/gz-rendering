@@ -26,7 +26,7 @@
 // PARITY_CAPSULE=1: adds a tilted capsule, resized after it is attached
 // PARITY_TEXBOX=<png>: textured box in the RGB overview (texture orientation)
 // PARITY_PBR=1: PBR material row in the RGB overview (roughness, metal,
-// normal, emissive, light and environment maps); PARITY_PBR=sky also
+// normal, emissive, light and environment maps, wireframe); PARITY_PBR=sky also
 // enables the sky
 // PARITY_WIDEANGLE=1: only the wide-angle camera geometry checks (RGB images,
 // per-object centroids, cutoff circle radius, Project3d), see WideAngle()
@@ -1009,6 +1009,7 @@ void AddPbrRow(ScenePtr _scene, bool _sky)
   {
     bool box;
     std::function<void(MaterialPtr)> set;
+    bool wireframe = false;
   };
   const std::vector<Sample> samples = {
     // dielectric, rough 0.1 / 0.9
@@ -1045,12 +1046,14 @@ void AddPbrRow(ScenePtr _scene, bool _sky)
       _m->SetDiffuse(0.9, 0.9, 0.9); _m->SetMetalness(1.0f);
       _m->SetRoughness(0.1f);
       _m->SetEnvironmentMap(tex + "skybox_lowres.dds"); }},
+    // wireframe
+    {false, [](MaterialPtr _m) { _m->SetDiffuse(0.9, 0.9, 0.2); }, true},
   };
   // a row facing the overview camera, above the sensor scene
   const double count = static_cast<double>(samples.size());
   for (size_t i = 0; i < samples.size(); ++i)
   {
-    const double t = (static_cast<double>(i) - (count - 1) / 2) * 0.75;
+    const double t = (static_cast<double>(i) - (count - 1) / 2) * 0.65 - 0.4;
     VisualPtr v = _scene->CreateVisual();
     v->AddGeometry(samples[i].box ? _scene->CreateBox() :
         _scene->CreateSphere());
@@ -1060,6 +1063,7 @@ void AddPbrRow(ScenePtr _scene, bool _sky)
     MaterialPtr m = _scene->CreateMaterial();
     samples[i].set(m);
     v->SetMaterial(m);
+    v->SetWireframe(samples[i].wireframe);
     _scene->RootVisual()->AddChild(v);
   }
   if (_sky)
