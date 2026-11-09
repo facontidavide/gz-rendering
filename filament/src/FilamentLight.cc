@@ -178,8 +178,23 @@ void FilamentLight::Init()
 {
   BaseLight::Init();
   auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+  // Directional shadows like ogre2's PSSM: 3 cascades, 2048 maps, practical
+  // splits with lambda 0.95. Filament's default (one 1024 map over the
+  // whole view) blurs thin casters into nothing a few metres away.
+  // ponytail: splits computed for a 0.1..100 m camera; Filament takes them
+  // per light, not per camera. Scene::SetShadowTextureSize not wired up.
+  filament::LightManager::ShadowOptions shadows;
+  if (this->type == filament::LightManager::Type::DIRECTIONAL ||
+      this->type == filament::LightManager::Type::SUN)
+  {
+    shadows.mapSize = 2048u;
+    shadows.shadowCascades = 3u;
+    filament::LightManager::ShadowCascades::computePracticalSplits(
+        shadows.cascadeSplitPositions, 3u, 0.1f, 100.0f, 0.95f);
+  }
   filament::LightManager::Builder(this->type)
       .castShadows(this->castShadows)
+      .shadowOptions(shadows)
       .build(*engine, this->entity);
   this->scene->Native()->addEntity(this->entity);
   this->UpdateLight();
