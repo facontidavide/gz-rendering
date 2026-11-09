@@ -78,3 +78,5 @@ target_link_libraries(filament_parity
   PRIVATE
     ${PROJECT_LIBRARY_TARGET_NAME}
     gz-common::gz-common)
+target_compile_definitions(filament_parity
+  PRIVATE PROJECT_SOURCE_PATH="${PROJECT_SOURCE_DIR}")

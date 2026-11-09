@@ -37,11 +37,17 @@
 #include <sstream>
 
 #include <gz/common/Console.hh>
+#include <gz/common/Image.hh>
+#include <gz/common/geospatial/ImageHeightmap.hh>
 #include <gz/common/Mesh.hh>
 #include <gz/common/MeshManager.hh>
 #include <gz/math/Pose3.hh>
 
+#include <gz/rendering/Camera.hh>
 #include <gz/rendering/DepthCamera.hh>
+#include <gz/rendering/Heightmap.hh>
+#include <gz/rendering/Light.hh>
+#include <gz/rendering/Image.hh>
 #include <gz/rendering/GpuRays.hh>
 #include <gz/rendering/RenderEngine.hh>
 #include <gz/rendering/RenderingIface.hh>
@@ -91,8 +97,34 @@ namespace
   }
   void BuildScene(ScenePtr _scene)
   {
-    // floor and a back wall (the wall sits inside every far clip)
-    Add(_scene, _scene->CreateBox(), {0, 0, -0.05, 0, 0, 0}, {20, 20, 0.1});
+    // floor and a back wall (the wall sits inside every far clip); with
+    // PARITY_HEIGHTMAP=<image> a 20 x 20 x 3 m heightmap replaces the floor,
+    // its mid height at z = 0
+    if (const char *hm = std::getenv("PARITY_HEIGHTMAP"))
+    {
+      auto data = std::make_shared<common::ImageHeightmap>();
+      if (data->Load(hm) != 0)
+        std::cerr << "cannot load heightmap " << hm << std::endl;
+      HeightmapDescriptor desc;
+      desc.SetData(data);
+      desc.SetSize({20, 20, 3});
+      desc.SetPosition({0, 0, -1.5});
+      desc.SetSampling(2u);
+      HeightmapTexture tex;
+      tex.SetSize(2.0);
+      tex.SetDiffuse(std::string(PROJECT_SOURCE_PATH) +
+          "/test/media/materials/textures/texture.png");
+      desc.AddTexture(tex);
+      VisualPtr v = _scene->CreateVisual();
+      v->AddGeometry(_scene->CreateHeightmap(desc));
+      v->SetUserData("label", 9);
+      _scene->RootVisual()->AddChild(v);
+      ++g_added;
+    }
+    else
+    {
+      Add(_scene, _scene->CreateBox(), {0, 0, -0.05, 0, 0, 0}, {20, 20, 0.1});
+    }
     Add(_scene, _scene->CreateBox(), {7, 0, 1.5, 0, 0, 0}, {0.2, 10, 3});
     // primitives at assorted poses, near and far
     Add(_scene, _scene->CreateBox(), {2, 0.5, 0.5, 0, 0, 0.4}, {1, 1, 1});
@@ -219,6 +251,28 @@ int main(int _argc, char **_argv)
   BuildScene(scene);
   std::ofstream index(dir + "/index.txt");
   std::ofstream timing(dir + "/timing.txt");
+
+  {
+    // RGB overview for eyeballing, not compared
+    scene->SetAmbientLight(0.3, 0.3, 0.3);
+    DirectionalLightPtr sun = scene->CreateDirectionalLight();
+    sun->SetDirection(-0.5, -0.5, -1);
+    sun->SetDiffuseColor(0.9, 0.9, 0.9);
+    scene->RootVisual()->AddChild(sun);
+    CameraPtr cam = scene->CreateCamera("rgb");
+    cam->SetLocalPose({-8, 8, 5, 0, 0.4, -GZ_PI / 4});
+    cam->SetImageWidth(640);
+    cam->SetImageHeight(480);
+    cam->SetAspectRatio(640.0 / 480.0);
+    cam->SetHFOV(GZ_PI / 3);
+    scene->RootVisual()->AddChild(cam);
+    Image img = cam->CreateImage();
+    cam->Capture(img);
+    common::Image png;
+    png.SetFromData(img.Data<unsigned char>(), 640, 480,
+        common::Image::RGB_INT8);
+    png.SavePNG(dir + "/rgb.png");
+  }
 
   const std::vector<DepthCfg> depthCfgs = {
     {"depthA", {0, 0, 1, 0, 0.2, 0}, 320, 240, GZ_PI / 2, 0.1, 10},
