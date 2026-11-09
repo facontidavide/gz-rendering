@@ -135,18 +135,20 @@ filament::RenderTarget *FilamentRenderTarget::Native() const
 }
 
 //////////////////////////////////////////////////
-void FilamentRenderTarget::Render(filament::View *_view)
+void FilamentRenderTarget::Render(filament::View *_view,
+    const filament::Viewport *_viewport, bool _clear)
 {
   if (!this->target || !_view)
     return;
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
   filament::Renderer::ClearOptions clear;
   clear.clearColor = this->clearColor;
-  clear.clear = true;
-  clear.discard = true;
+  clear.clear = _clear;
+  clear.discard = _clear;
   renderer->setClearOptions(clear);
   _view->setRenderTarget(this->target);
-  _view->setViewport({0, 0, this->width, this->height});
+  _view->setViewport(_viewport ? *_viewport :
+      filament::Viewport{0, 0, this->width, this->height});
   renderer->renderStandaloneView(_view);
 }
 

@@ -30,6 +30,7 @@ namespace filament
   class RenderTarget;
   class Texture;
   class View;
+  class Viewport;
 }
 
 namespace gz
@@ -52,7 +53,11 @@ namespace gz
       public: virtual void Copy(Image &_image) const override;
 
       /// \brief Render _view into this target (synchronously submits)
-      public: void Render(filament::View *_view);
+      /// \param[in] _viewport Region to draw into; nullptr: whole target
+      /// \param[in] _clear Clear the color attachment first (the whole
+      /// attachment, on every backend); false keeps what is there
+      public: void Render(filament::View *_view,
+          const filament::Viewport *_viewport = nullptr, bool _clear = true);
 
       /// \brief Raw clear color written to the attachment before rendering
       public: void SetClearColor(const filament::math::float4 &_color);

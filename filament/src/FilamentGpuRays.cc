@@ -28,6 +28,7 @@
 #include <filament/Renderer.h>
 #include <filament/TransformManager.h>
 #include <filament/View.h>
+#include <filament/Viewport.h>
 #include <utils/EntityManager.h>
 
 #include <gz/common/Console.hh>
@@ -223,6 +224,16 @@ void FilamentGpuRays::UpdateRays()
     }
     v += vStep;
   }
+
+  // face texel (py * n + px) -> atlas texel, used faces left to right
+  std::array<unsigned int, 6> slot{};
+  this->faceCount = 0u;
+  for (int f = 0; f < 6; ++f)
+    if (this->faceUsed[f])
+      slot[f] = this->faceCount++;
+  const unsigned int stride = n * this->faceCount;
+  for (Ray &ray : this->rays)
+    ray.texel = ray.texel / n * stride + slot[ray.face] * n + ray.texel % n;
 }
 
 //////////////////////////////////////////////////
@@ -243,9 +254,11 @@ void FilamentGpuRays::Render()
       FilamentConversions::ToLayers(this->VisibilityMask()));
 
   // SetWidth/SetHeight mark the target dirty (rebuilt in PreRender)
-  if (this->renderTexture->Width() != n)
+  const unsigned int atlasWidth = n * this->faceCount;
+  if (this->renderTexture->Width() != atlasWidth ||
+      this->renderTexture->Height() != n)
   {
-    this->renderTexture->SetWidth(n);
+    this->renderTexture->SetWidth(atlasWidth);
     this->renderTexture->SetHeight(n);
   }
   this->renderTexture->PreRender();
@@ -258,22 +271,26 @@ void FilamentGpuRays::Render()
   const auto &meshes = this->scene->Meshes();
   for (FilamentMesh *m : meshes)
     m->OverrideMaterial(this->depthInstance);
-  // queue every face's render and readback, then wait once
+  // every used face into its own atlas slot, then a single readback: the
+  // first pass clears the whole attachment, the others keep it
   auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
+  unsigned int slot = 0u;
   for (int f = 0; f < 6; ++f)
   {
     if (!this->faceUsed[f])
       continue;
     tm.setTransform(camInst, FaceTransform(kFaces[f]));
-    this->renderTexture->Render(this->view);
-    this->faceDepth[f].resize(static_cast<size_t>(n) * n);
-    renderer->readPixels(this->renderTexture->Native(), 0, 0, n, n,
-        filament::backend::PixelBufferDescriptor(this->faceDepth[f].data(),
-        this->faceDepth[f].size() * sizeof(float),
-        filament::backend::PixelDataFormat::R,
-        filament::backend::PixelDataType::FLOAT));
+    const filament::Viewport vp{static_cast<int32_t>(slot * n), 0, n, n};
+    this->renderTexture->Render(this->view, &vp, slot == 0u);
+    ++slot;
   }
+  this->atlas.resize(static_cast<size_t>(atlasWidth) * n);
+  renderer->readPixels(this->renderTexture->Native(), 0, 0, atlasWidth, n,
+      filament::backend::PixelBufferDescriptor(this->atlas.data(),
+      this->atlas.size() * sizeof(float),
+      filament::backend::PixelDataFormat::R,
+      filament::backend::PixelDataType::FLOAT));
   engine->flushAndWait();
   for (FilamentMesh *m : meshes)
     m->RestoreMaterials();
@@ -294,9 +311,9 @@ void FilamentGpuRays::PostRender()
   for (size_t k = 0; k < this->rays.size(); ++k)
   {
     const Ray &ray = this->rays[k];
-    const std::vector<float> &depth = this->faceDepth[ray.face];
-    float range = depth.empty() ? std::numeric_limits<float>::infinity() :
-        depth[ray.texel] * ray.invCos;
+    float range = ray.texel < this->atlas.size() ?
+        this->atlas[ray.texel] * ray.invCos :
+        std::numeric_limits<float>::infinity();
     if (!std::isfinite(range) || range > farClip)
       range = this->dataMaxVal;
     else if (range < nearClip)

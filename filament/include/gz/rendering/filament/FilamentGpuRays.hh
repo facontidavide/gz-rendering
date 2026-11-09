@@ -76,8 +76,9 @@ namespace gz
       /// scan configuration changed
       private: void UpdateRays();
 
-      /// \brief Per ray: cube face, texel index, 1 / cos(angle between the
-      /// texel center direction and the face axis): depth to range
+      /// \brief Per ray: cube face, texel index in the atlas, 1 / cos(angle
+      /// between the texel center direction and the face axis): depth to
+      /// range
       private: struct Ray { int face; unsigned int texel; float invCos; };
 
       private: std::vector<Ray> rays;
@@ -89,7 +90,11 @@ namespace gz
 
       private: std::array<bool, 6> faceUsed{};
 
-      private: std::array<std::vector<float>, 6> faceDepth;
+      /// \brief Used faces side by side in one row (faceRes * faceCount
+      /// wide): one readback per scan instead of one per face
+      private: std::vector<float> atlas;
+
+      private: unsigned int faceCount{0u};
 
       private: std::vector<float> scan;
 
