@@ -1208,7 +1208,7 @@ int main(int _argc, char **_argv)
     {"depthB", {-1, 2, 0.5, 0, 0.1, -0.6}, 640, 480, GZ_PI / 3, 0.5, 6},
     {"depthC", {0, 0, 0.9, 0.2, 0.3, 0.4}, 256, 256, 1.2, 0.3, 4},
   };
-  const std::vector<RaysCfg> raysCfgs = {
+  std::vector<RaysCfg> raysCfgs = {
     {"lidar2d", {0, 0, 0.5, 0, 0, 0}, 720, 1,
         -GZ_PI, GZ_PI, 0, 0, 0.1, 12, false},
     {"vlp16", {0, 0, 1.0, 0, 0, 0}, 1800, 16,
@@ -1220,6 +1220,14 @@ int main(int _argc, char **_argv)
     {"os1_64", {0, 0, 1.2, 0, 0, 0}, 1024, 64,
         -GZ_PI, GZ_PI, -0.3927, 0.3927, 0.3, 20, false},
   };
+
+  // PARITY_S2L2=1: also the 2048x128 lidar of the gz-sim S2L2 benchmark
+  // (quadruped-physics-bench lidar_eq worlds)
+  if (std::getenv("PARITY_S2L2"))
+  {
+    raysCfgs.push_back({"s2l2", {0, 0, 1.2, 0, 0, 0}, 2048, 128,
+        -GZ_PI, GZ_PI, -0.3927, 0.3927, 0.3, 8, false});
+  }
 
   if (std::getenv("PARITY_PARTICLES"))
   {
