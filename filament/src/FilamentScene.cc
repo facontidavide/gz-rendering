@@ -23,11 +23,14 @@
 
 #include <gz/common/Console.hh>
 
+#include "gz/rendering/filament/FilamentArrowVisual.hh"
+#include "gz/rendering/filament/FilamentAxisVisual.hh"
 #include "gz/rendering/filament/FilamentCamera.hh"
 #include "gz/rendering/filament/FilamentCapsule.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
 #include "gz/rendering/filament/FilamentDynamicMesh.hh"
+#include "gz/rendering/filament/FilamentGrid.hh"
 #include "gz/rendering/filament/FilamentGpuRays.hh"
 #include "gz/rendering/filament/FilamentBoundingBoxCamera.hh"
 #include "gz/rendering/filament/FilamentHeightmap.hh"
@@ -45,6 +48,7 @@
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
 #include "gz/rendering/filament/FilamentVisual.hh"
+#include "gz/rendering/filament/FilamentWireBox.hh"
 
 using namespace gz;
 using namespace rendering;
@@ -293,17 +297,21 @@ VisualPtr FilamentScene::CreateVisualImpl(unsigned int _id,
 }
 
 //////////////////////////////////////////////////
-ArrowVisualPtr FilamentScene::CreateArrowVisualImpl(unsigned int,
-    const std::string &)
+ArrowVisualPtr FilamentScene::CreateArrowVisualImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentArrowVisual>(new FilamentArrowVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
-AxisVisualPtr FilamentScene::CreateAxisVisualImpl(unsigned int,
-    const std::string &)
+AxisVisualPtr FilamentScene::CreateAxisVisualImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentAxisVisual>(new FilamentAxisVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
@@ -374,9 +382,12 @@ CapsulePtr FilamentScene::CreateCapsuleImpl(unsigned int _id,
 }
 
 //////////////////////////////////////////////////
-GridPtr FilamentScene::CreateGridImpl(unsigned int, const std::string &)
+GridPtr FilamentScene::CreateGridImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentGrid>(new FilamentGrid);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
@@ -417,10 +428,12 @@ HeightmapPtr FilamentScene::CreateHeightmapImpl(unsigned int _id,
 }
 
 //////////////////////////////////////////////////
-WireBoxPtr FilamentScene::CreateWireBoxImpl(unsigned int,
-    const std::string &)
+WireBoxPtr FilamentScene::CreateWireBoxImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentWireBox>(new FilamentWireBox);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
