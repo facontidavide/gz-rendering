@@ -16,6 +16,7 @@
  */
 
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include <filament/Engine.h>
@@ -30,6 +31,7 @@
 
 #include "gz/rendering/Image.hh"
 #include "gz/rendering/PixelFormat.hh"
+#include "gz/rendering/filament/FilamentGaussianNoisePass.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/Utils.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
@@ -68,15 +70,23 @@ void FilamentRenderTarget::DestroyTarget()
   auto *engine = Engine();
   if (!engine)
     return;
-  if (this->target)
-    engine->destroy(this->target);
-  if (this->colorTexture)
-    engine->destroy(this->colorTexture);
-  if (this->depthTexture)
-    engine->destroy(this->depthTexture);
+  for (auto *t : {this->target, this->scratchTarget})
+  {
+    if (t)
+      engine->destroy(t);
+  }
+  for (auto *t : {this->colorTexture, this->depthTexture,
+                  this->scratchColor, this->scratchDepth})
+  {
+    if (t)
+      engine->destroy(t);
+  }
   this->target = nullptr;
   this->colorTexture = nullptr;
   this->depthTexture = nullptr;
+  this->scratchTarget = nullptr;
+  this->scratchColor = nullptr;
+  this->scratchDepth = nullptr;
 }
 
 //////////////////////////////////////////////////
@@ -91,6 +101,14 @@ void FilamentRenderTarget::RebuildImpl()
   this->DestroyTarget();
   if (this->width == 0u || this->height == 0u)
     return;
+  this->BuildAttachments(this->target, this->colorTexture,
+      this->depthTexture);
+}
+
+//////////////////////////////////////////////////
+void FilamentRenderTarget::BuildAttachments(filament::RenderTarget *&_target,
+    filament::Texture *&_color, filament::Texture *&_depth) const
+{
   auto *engine = Engine();
 
   filament::Texture::InternalFormat colorFormat;
@@ -108,24 +126,54 @@ void FilamentRenderTarget::RebuildImpl()
       break;
   }
 
-  this->colorTexture = filament::Texture::Builder()
+  _color = filament::Texture::Builder()
       .width(this->width).height(this->height).levels(1)
       .format(colorFormat)
       .usage(filament::Texture::Usage::COLOR_ATTACHMENT |
              filament::Texture::Usage::SAMPLEABLE |
              filament::Texture::Usage::BLIT_SRC)
       .build(*engine);
-  this->depthTexture = filament::Texture::Builder()
+  _depth = filament::Texture::Builder()
       .width(this->width).height(this->height).levels(1)
       .format(filament::Texture::InternalFormat::DEPTH32F)
       .usage(filament::Texture::Usage::DEPTH_ATTACHMENT)
       .build(*engine);
-  this->target = filament::RenderTarget::Builder()
-      .texture(filament::RenderTarget::AttachmentPoint::COLOR,
-               this->colorTexture)
-      .texture(filament::RenderTarget::AttachmentPoint::DEPTH,
-               this->depthTexture)
+  _target = filament::RenderTarget::Builder()
+      .texture(filament::RenderTarget::AttachmentPoint::COLOR, _color)
+      .texture(filament::RenderTarget::AttachmentPoint::DEPTH, _depth)
       .build(*engine);
+}
+
+//////////////////////////////////////////////////
+const std::vector<RenderPassPtr> &FilamentRenderTarget::RenderPasses() const
+{
+  return this->renderPasses;
+}
+
+//////////////////////////////////////////////////
+void FilamentRenderTarget::ApplyRenderPasses(
+    const std::vector<RenderPassPtr> &_passes)
+{
+  for (const RenderPassPtr &pass : _passes)
+  {
+    auto *noise = dynamic_cast<FilamentGaussianNoisePass *>(pass.get());
+    if (!noise || !noise->IsEnabled() || !this->target)
+      continue;
+    // ping-pong: draw from the current attachments into a second set, which
+    // then becomes the current one
+    if (!this->scratchTarget)
+    {
+      this->BuildAttachments(this->scratchTarget, this->scratchColor,
+          this->scratchDepth);
+    }
+    filament::View *view = noise->ColorView(this->colorTexture);
+    if (!view)
+      continue;
+    std::swap(this->target, this->scratchTarget);
+    std::swap(this->colorTexture, this->scratchColor);
+    std::swap(this->depthTexture, this->scratchDepth);
+    this->Render(view);
+  }
 }
 
 //////////////////////////////////////////////////

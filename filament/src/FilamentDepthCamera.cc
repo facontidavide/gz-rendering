@@ -33,6 +33,7 @@
 #include "gz/rendering/Image.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
+#include "gz/rendering/filament/FilamentGaussianNoisePass.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
@@ -247,6 +248,9 @@ void FilamentDepthCamera::PostRender()
       std::memcpy(&out[3], &packed, sizeof(float));
     }
   }
+
+  FilamentGaussianNoisePass::ApplyDepth(*this, this->depthImage.data(),
+      wantCloud ? this->pointCloud.data() : nullptr);
 
   this->newDepthFrame(this->depthImage.data(), width, height, 1u, "FLOAT32");
   if (wantCloud)

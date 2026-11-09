@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include <filament/Camera.h>
 #include <filament/Engine.h>
@@ -296,6 +297,16 @@ void FilamentWideAngleCamera::Render()
   }
   tm.setTransform(camInst, FilamentConversions::CameraFix());
 
+  // render passes, like ogre2: on the cube faces, or with
+  // WideAngleCameraAfterStitching on the final image
+  std::vector<RenderPassPtr> facePasses, finalPasses;
+  for (const RenderPassPtr &pass : this->renderTexture->RenderPasses())
+  {
+    (pass->WideAngleCameraAfterStitching() ? finalPasses : facePasses)
+        .push_back(pass);
+  }
+  this->atlas->ApplyRenderPasses(facePasses);
+
   // second pass: lens mapping into the output image
   const CameraLens &cl = this->Lens();
   const math::Vector3d fun = cl.MappingFunctionAsVector3d();
@@ -318,6 +329,7 @@ void FilamentWideAngleCamera::Render()
   mi->setParameter("flip",
       engine->getBackend() == filament::Engine::Backend::OPENGL ? 1.0f : 0.0f);
   this->renderTexture->Render(this->sampleView);
+  this->renderTexture->ApplyRenderPasses(finalPasses);
 }
 
 //////////////////////////////////////////////////
