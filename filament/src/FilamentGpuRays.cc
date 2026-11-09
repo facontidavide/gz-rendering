@@ -22,6 +22,12 @@
 
 #include <filament/Camera.h>
 #include <filament/Engine.h>
+#include <filament/IndexBuffer.h>
+#include <filament/RenderableManager.h>
+#include <filament/Scene.h>
+#include <filament/Texture.h>
+#include <filament/TextureSampler.h>
+#include <filament/VertexBuffer.h>
 #include <filament/Material.h>
 #include <filament/MaterialInstance.h>
 #include <backend/PixelBufferDescriptor.h>
@@ -110,6 +116,105 @@ void FilamentGpuRays::Init()
   this->renderTexture = std::dynamic_pointer_cast<FilamentRenderTexture>(
       this->scene->CreateRenderTexture());
   this->renderTexture->SetFormat(PF_FLOAT32_R);
+  this->InitSamplePass();
+}
+
+//////////////////////////////////////////////////
+void FilamentGpuRays::InitSamplePass()
+{
+  auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+  filament::Material *mat =
+      FilamentRenderEngine::Instance()->Material("gz_lidar_sample");
+  if (!mat)
+  {
+    gzerr << "gz_lidar_sample material not available" << std::endl;
+    return;
+  }
+  this->sampleInstance = mat->createInstance();
+  this->sampleScene = engine->createScene();
+  this->sampleView = engine->createView();
+  this->sampleView->setScene(this->sampleScene);
+  this->sampleView->setPostProcessingEnabled(false);
+  this->sampleView->setShadowingEnabled(false);
+  // a view needs a camera; device-domain vertices ignore it
+  this->sampleCameraEntity = ::utils::EntityManager::get().create();
+  this->sampleView->setCamera(engine->createCamera(this->sampleCameraEntity));
+
+  // one triangle covering clip space [-1, 1]^2
+  static const filament::math::float4 kVerts[3] = {
+      {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f},
+      {-1.0f, 3.0f, 0.5f, 1.0f}};
+  static const uint16_t kIndices[3] = {0, 1, 2};
+  this->triangleVb = filament::VertexBuffer::Builder()
+      .vertexCount(3).bufferCount(1)
+      .attribute(filament::VertexAttribute::POSITION, 0,
+          filament::VertexBuffer::AttributeType::FLOAT4)
+      .build(*engine);
+  this->triangleVb->setBufferAt(*engine, 0,
+      filament::VertexBuffer::BufferDescriptor(kVerts, sizeof(kVerts)));
+  this->triangleIb = filament::IndexBuffer::Builder()
+      .indexCount(3).bufferType(filament::IndexBuffer::IndexType::USHORT)
+      .build(*engine);
+  this->triangleIb->setBuffer(*engine,
+      filament::IndexBuffer::BufferDescriptor(kIndices, sizeof(kIndices)));
+  this->triangle = ::utils::EntityManager::get().create();
+  filament::RenderableManager::Builder(1)
+      .boundingBox({{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}})
+      .culling(false)
+      .castShadows(false)
+      .receiveShadows(false)
+      .material(0, this->sampleInstance)
+      .geometry(0, filament::RenderableManager::PrimitiveType::TRIANGLES,
+          this->triangleVb, this->triangleIb)
+      .build(*engine, this->triangle);
+  this->sampleScene->addEntity(this->triangle);
+
+  this->scanTexture = std::dynamic_pointer_cast<FilamentRenderTexture>(
+      this->scene->CreateRenderTexture());
+  this->scanTexture->SetFormat(PF_FLOAT32_R);
+}
+
+//////////////////////////////////////////////////
+void FilamentGpuRays::UploadRays()
+{
+  auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+  const unsigned int hCount = std::max(this->RangeCount(), 1);
+  const unsigned int vCount = std::max(this->VerticalRangeCount(), 1);
+  if (this->rayTexture)
+    engine->destroy(this->rayTexture);
+  this->rayTexture = filament::Texture::Builder()
+      .width(hCount).height(vCount).levels(1)
+      .format(filament::Texture::InternalFormat::RGBA32F)
+      .usage(filament::Texture::Usage::SAMPLEABLE |
+             filament::Texture::Usage::UPLOADABLE)
+      .build(*engine);
+  // readPixels returns render targets top row first on both backends, but
+  // texture rows (texelFetch, gl_FragCoord) start at the bottom on OpenGL and
+  // at the top on Vulkan. The CPU side indexes readback rows, so flip on GL,
+  // for the atlas and for the scan alike (verified against CPU sampling).
+  const bool flip = engine->getBackend() == filament::Engine::Backend::OPENGL;
+  const unsigned int stride = this->faceRes * this->faceCount;
+  const size_t count = this->rays.size() * 4u;
+  auto *data = new float[count];
+  for (size_t k = 0; k < this->rays.size(); ++k)
+  {
+    const Ray &ray = this->rays[k];
+    const size_t row = flip ? vCount - 1u - k / hCount : k / hCount;
+    const unsigned int atlasRow = ray.texel / stride;
+    float *t = data + (row * hCount + k % hCount) * 4u;
+    t[0] = static_cast<float>(ray.texel % stride);
+    t[1] = static_cast<float>(flip ? this->faceRes - 1u - atlasRow : atlasRow);
+    t[2] = ray.invCos;
+    t[3] = 0.0f;
+  }
+  this->rayTexture->setImage(*engine, 0,
+      filament::Texture::PixelBufferDescriptor(data, count * sizeof(float),
+      filament::Texture::Format::RGBA, filament::Texture::Type::FLOAT,
+      [](void *_buf, size_t, void *) { delete[] static_cast<float *>(_buf); }));
+  const filament::TextureSampler nearest(
+      filament::TextureSampler::MinFilter::NEAREST,
+      filament::TextureSampler::MagFilter::NEAREST);
+  this->sampleInstance->setParameter("rays", this->rayTexture, nearest);
 }
 
 //////////////////////////////////////////////////
@@ -128,6 +233,44 @@ void FilamentGpuRays::Destroy()
       engine->getTransformManager().destroy(this->cameraEntity);
       ::utils::EntityManager::get().destroy(this->cameraEntity);
     }
+  }
+  if (engine)
+  {
+    if (this->sampleView)
+      engine->destroy(this->sampleView);
+    if (!this->triangle.isNull())
+    {
+      engine->getRenderableManager().destroy(this->triangle);
+      ::utils::EntityManager::get().destroy(this->triangle);
+    }
+    if (this->sampleInstance)
+      engine->destroy(this->sampleInstance);
+    if (this->triangleVb)
+      engine->destroy(this->triangleVb);
+    if (this->triangleIb)
+      engine->destroy(this->triangleIb);
+    if (this->rayTexture)
+      engine->destroy(this->rayTexture);
+    if (this->sampleScene)
+      engine->destroy(this->sampleScene);
+    if (!this->sampleCameraEntity.isNull())
+    {
+      engine->destroyCameraComponent(this->sampleCameraEntity);
+      ::utils::EntityManager::get().destroy(this->sampleCameraEntity);
+    }
+  }
+  this->sampleView = nullptr;
+  this->triangle = ::utils::Entity();
+  this->sampleInstance = nullptr;
+  this->triangleVb = nullptr;
+  this->triangleIb = nullptr;
+  this->rayTexture = nullptr;
+  this->sampleScene = nullptr;
+  this->sampleCameraEntity = ::utils::Entity();
+  if (this->scanTexture)
+  {
+    this->scanTexture->Destroy();
+    this->scanTexture.reset();
   }
   this->view = nullptr;
   this->depthInstance = nullptr;
@@ -234,12 +377,14 @@ void FilamentGpuRays::UpdateRays()
   const unsigned int stride = n * this->faceCount;
   for (Ray &ray : this->rays)
     ray.texel = ray.texel / n * stride + slot[ray.face] * n + ray.texel % n;
+  if (this->sampleInstance)
+    this->UploadRays();
 }
 
 //////////////////////////////////////////////////
 void FilamentGpuRays::Render()
 {
-  if (!this->depthInstance)
+  if (!this->depthInstance || !this->sampleInstance)
     return;
   this->UpdateRays();
   const unsigned int n = this->faceRes;
@@ -285,10 +430,26 @@ void FilamentGpuRays::Render()
     this->renderTexture->Render(this->view, &vp, slot == 0u);
     ++slot;
   }
-  this->atlas.resize(static_cast<size_t>(atlasWidth) * n);
-  renderer->readPixels(this->renderTexture->Native(), 0, 0, atlasWidth, n,
-      filament::backend::PixelBufferDescriptor(this->atlas.data(),
-      this->atlas.size() * sizeof(float),
+  // second pass: one fragment per ray samples the atlas, only the scan is
+  // read back (the atlas is up to 6 MB, a VLP-16 scan 115 KB)
+  const unsigned int hCount = std::max(this->RangeCount(), 1);
+  const unsigned int vCount = std::max(this->VerticalRangeCount(), 1);
+  this->sampleInstance->setParameter("atlas",
+      this->renderTexture->ColorTexture(), filament::TextureSampler(
+      filament::TextureSampler::MinFilter::NEAREST,
+      filament::TextureSampler::MagFilter::NEAREST));
+  if (this->scanTexture->Width() != hCount ||
+      this->scanTexture->Height() != vCount)
+  {
+    this->scanTexture->SetWidth(hCount);
+    this->scanTexture->SetHeight(vCount);
+  }
+  this->scanTexture->PreRender();
+  this->scanTexture->Render(this->sampleView);
+  this->ranges.resize(static_cast<size_t>(hCount) * vCount);
+  renderer->readPixels(this->scanTexture->Native(), 0, 0, hCount, vCount,
+      filament::backend::PixelBufferDescriptor(this->ranges.data(),
+      this->ranges.size() * sizeof(float),
       filament::backend::PixelDataFormat::R,
       filament::backend::PixelDataType::FLOAT));
   engine->flushAndWait();
@@ -310,9 +471,7 @@ void FilamentGpuRays::PostRender()
   const float farClip = static_cast<float>(this->FarClipPlane());
   for (size_t k = 0; k < this->rays.size(); ++k)
   {
-    const Ray &ray = this->rays[k];
-    float range = ray.texel < this->atlas.size() ?
-        this->atlas[ray.texel] * ray.invCos :
+    float range = k < this->ranges.size() ? this->ranges[k] :
         std::numeric_limits<float>::infinity();
     if (!std::isfinite(range) || range > farClip)
       range = this->dataMaxVal;

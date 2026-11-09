@@ -80,6 +80,12 @@ void FilamentRenderTarget::DestroyTarget()
 }
 
 //////////////////////////////////////////////////
+filament::Texture *FilamentRenderTarget::ColorTexture() const
+{
+  return this->colorTexture;
+}
+
+//////////////////////////////////////////////////
 void FilamentRenderTarget::RebuildImpl()
 {
   this->DestroyTarget();

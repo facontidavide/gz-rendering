@@ -64,6 +64,9 @@ namespace gz
 
       public: filament::RenderTarget *Native() const;
 
+      /// \brief Color attachment, e.g. to sample it in a later pass
+      public: filament::Texture *ColorTexture() const;
+
       /// \brief 8 bit formats are sRGB encoded by default (camera images);
       /// false stores values as is (e.g. segmentation labels)
       public: void SetSrgb(bool _srgb);

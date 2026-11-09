@@ -33,7 +33,11 @@
 namespace filament
 {
   class Camera;
+  class IndexBuffer;
   class MaterialInstance;
+  class Scene;
+  class Texture;
+  class VertexBuffer;
   class View;
 }
 
@@ -44,8 +48,9 @@ namespace gz
     inline namespace GZ_RENDERING_VERSION_NAMESPACE {
     //
     /// \brief GPU lidar: renders the cube faces the rays need with the
-    /// linear-depth material, then samples one depth texel per ray on the
-    /// CPU. Channels: range, retro (always 0), 0.
+    /// linear-depth material into one atlas, then a second pass samples one
+    /// texel per ray on the GPU so only the scan is read back (like ogre2).
+    /// Channels: range, retro (always 0), 0.
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentGpuRays :
       public BaseGpuRays<FilamentSensor>
     {
@@ -90,9 +95,36 @@ namespace gz
 
       private: std::array<bool, 6> faceUsed{};
 
-      /// \brief Used faces side by side in one row (faceRes * faceCount
-      /// wide): one readback per scan instead of one per face
-      private: std::vector<float> atlas;
+      /// \brief Create the second-pass objects (scene, view, fullscreen
+      /// triangle, material)
+      private: void InitSamplePass();
+
+      /// \brief Upload the per-ray atlas texel and 1/cos to rayTexture
+      private: void UploadRays();
+
+      /// \brief Range per ray, read back from the second pass
+      private: std::vector<float> ranges;
+
+      /// \brief Second pass: its own scene holding a fullscreen triangle
+      private: filament::Scene *sampleScene{nullptr};
+
+      private: filament::View *sampleView{nullptr};
+
+      private: ::utils::Entity sampleCameraEntity;
+
+      private: ::utils::Entity triangle;
+
+      private: filament::VertexBuffer *triangleVb{nullptr};
+
+      private: filament::IndexBuffer *triangleIb{nullptr};
+
+      private: filament::MaterialInstance *sampleInstance{nullptr};
+
+      /// \brief RGBA32F, one texel per ray: atlas x, atlas y, 1/cos
+      private: filament::Texture *rayTexture{nullptr};
+
+      /// \brief R32F, one texel per ray: the range
+      private: FilamentRenderTexturePtr scanTexture;
 
       private: unsigned int faceCount{0u};
 
