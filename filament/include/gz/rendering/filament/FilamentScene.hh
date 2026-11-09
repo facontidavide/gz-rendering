@@ -38,6 +38,8 @@ namespace gz
   {
     inline namespace GZ_RENDERING_VERSION_NAMESPACE {
     //
+    class FilamentDynamicMesh;
+
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentScene :
       public BaseScene
     {
@@ -70,6 +72,10 @@ namespace gz
       public: const std::set<FilamentMesh *> &Meshes() const;
 
       public: void RegisterMesh(FilamentMesh *_mesh);
+
+      /// \brief Create a mesh whose vertices are rebuilt on change (lines,
+      /// points, triangles), for markers, wire boxes and grids
+      public: std::shared_ptr<FilamentDynamicMesh> CreateDynamicMesh();
 
       public: void UnregisterMesh(FilamentMesh *_mesh);
 

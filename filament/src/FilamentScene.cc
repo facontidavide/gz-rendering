@@ -27,6 +27,7 @@
 #include "gz/rendering/filament/FilamentCapsule.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
+#include "gz/rendering/filament/FilamentDynamicMesh.hh"
 #include "gz/rendering/filament/FilamentGpuRays.hh"
 #include "gz/rendering/filament/FilamentBoundingBoxCamera.hh"
 #include "gz/rendering/filament/FilamentHeightmap.hh"
@@ -34,6 +35,7 @@
 #include "gz/rendering/filament/FilamentThermalCamera.hh"
 #include "gz/rendering/filament/FilamentWideAngleCamera.hh"
 #include "gz/rendering/filament/FilamentLight.hh"
+#include "gz/rendering/filament/FilamentMarker.hh"
 #include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentMeshFactory.hh"
@@ -377,9 +379,12 @@ GridPtr FilamentScene::CreateGridImpl(unsigned int, const std::string &)
 }
 
 //////////////////////////////////////////////////
-MarkerPtr FilamentScene::CreateMarkerImpl(unsigned int, const std::string &)
+MarkerPtr FilamentScene::CreateMarkerImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentMarker>(new FilamentMarker);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
@@ -415,6 +420,15 @@ WireBoxPtr FilamentScene::CreateWireBoxImpl(unsigned int,
     const std::string &)
 {
   return nullptr;
+}
+
+//////////////////////////////////////////////////
+std::shared_ptr<FilamentDynamicMesh> FilamentScene::CreateDynamicMesh()
+{
+  auto mesh = std::make_shared<FilamentDynamicMesh>();
+  const unsigned int objId = this->CreateObjectId();
+  this->InitObject(mesh, objId, this->CreateObjectName(objId, "DynamicMesh"));
+  return mesh;
 }
 
 //////////////////////////////////////////////////
