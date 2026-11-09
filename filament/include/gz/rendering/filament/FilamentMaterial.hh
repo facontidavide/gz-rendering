@@ -65,6 +65,14 @@ namespace gz
 
       public: virtual void ClearTexture() override;
 
+      public: virtual void SetRoughness(const float _roughness) override;
+
+      public: virtual float Roughness() const override;
+
+      public: virtual void SetMetalness(const float _metalness) override;
+
+      public: virtual float Metalness() const override;
+
       /// \brief Active material instance (lit or unlit)
       public: filament::MaterialInstance *Instance() const;
 
@@ -98,6 +106,11 @@ namespace gz
       protected: filament::Texture *pushedTexture{nullptr};
 
       protected: std::shared_ptr<const common::Image> textureData;
+
+      /// \brief gz::common::Pbr defaults, like ogre2 after Reset()
+      protected: float roughness{0.5f};
+
+      protected: float metalness{0.0f};
 
       private: friend class FilamentScene;
     };

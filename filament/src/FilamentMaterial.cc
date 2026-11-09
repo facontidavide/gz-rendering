@@ -182,6 +182,30 @@ void FilamentMaterial::PreRender()
 }
 
 //////////////////////////////////////////////////
+void FilamentMaterial::SetRoughness(const float _roughness)
+{
+  this->roughness = _roughness;
+}
+
+//////////////////////////////////////////////////
+float FilamentMaterial::Roughness() const
+{
+  return this->roughness;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetMetalness(const float _metalness)
+{
+  this->metalness = _metalness;
+}
+
+//////////////////////////////////////////////////
+float FilamentMaterial::Metalness() const
+{
+  return this->metalness;
+}
+
+//////////////////////////////////////////////////
 filament::Texture *FilamentMaterial::FilamentTexture() const
 {
   return this->texture;
