@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cmath>
 
 #include <filament/Engine.h>
 #include <filament/Material.h>
@@ -59,6 +60,46 @@ void FilamentMaterial::Destroy()
 }
 
 //////////////////////////////////////////////////
+bool FilamentMaterial::HasTexture() const
+{
+  return !this->textureName.empty();
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::Texture() const
+{
+  return this->textureName;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetTexture(const std::string &_texture)
+{
+  this->SetTexture(_texture, nullptr);
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetTexture(const std::string &_texture,
+    const std::shared_ptr<const common::Image> &_img)
+{
+  this->textureName = _texture;
+  this->textureData = _texture.empty() ? nullptr : _img;
+  // force a reload even when only the image data changed
+  this->loadedTexture.clear();
+}
+
+//////////////////////////////////////////////////
+std::shared_ptr<const common::Image> FilamentMaterial::TextureData() const
+{
+  return this->textureData;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::ClearTexture()
+{
+  this->SetTexture("", nullptr);
+}
+
+//////////////////////////////////////////////////
 filament::MaterialInstance *FilamentMaterial::Instance() const
 {
   return this->LightingEnabled() ? this->lit : this->unlit;
@@ -91,7 +132,8 @@ void FilamentMaterial::PreRender()
 
   if (this->HasTexture() && this->Texture() != this->loadedTexture)
   {
-    this->texture = FilamentRenderEngine::Instance()->Texture(this->Texture());
+    this->texture = FilamentRenderEngine::Instance()->Texture(
+        this->Texture(), this->TextureData());
     this->loadedTexture = this->Texture();
   }
   else if (!this->HasTexture())
@@ -123,5 +165,12 @@ void FilamentMaterial::Update(filament::MaterialInstance *_instance)
         std::clamp(this->Roughness(), 0.05f, 1.0f));
     _instance->setParameter("metallic",
         std::clamp(this->Metalness(), 0.0f, 1.0f));
+    // ogre2 scales the specular lobe by the gz specular color. filament's
+    // dielectric F0 is 0.16 * reflectance^2 (0.04 at the default 0.5), so
+    // F0 = 0.04 * specular gives reflectance = 0.5 * sqrt(specular).
+    const math::Color s = this->Specular();
+    const double spec = std::clamp((s.R() + s.G() + s.B()) / 3.0, 0.0, 1.0);
+    _instance->setParameter("reflectance",
+        static_cast<float>(0.5 * std::sqrt(spec)));
   }
 }

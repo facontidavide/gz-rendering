@@ -50,6 +50,20 @@ namespace gz
 
       public: virtual void PreRender() override;
 
+      public: virtual bool HasTexture() const override;
+
+      public: virtual std::string Texture() const override;
+
+      public: virtual void SetTexture(const std::string &_texture) override;
+
+      public: virtual void SetTexture(const std::string &_texture,
+          const std::shared_ptr<const common::Image> &_img) override;
+
+      public: virtual std::shared_ptr<const common::Image> TextureData()
+          const override;
+
+      public: virtual void ClearTexture() override;
+
       /// \brief Active material instance (lit or unlit)
       public: filament::MaterialInstance *Instance() const;
 
@@ -64,6 +78,10 @@ namespace gz
       protected: filament::Texture *texture{nullptr};
 
       protected: std::string loadedTexture;
+
+      protected: std::string textureName;
+
+      protected: std::shared_ptr<const common::Image> textureData;
 
       private: friend class FilamentScene;
     };

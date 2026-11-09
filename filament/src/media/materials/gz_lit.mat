@@ -8,6 +8,7 @@ material {
         { type : float4,    name : baseColor },
         { type : float,     name : roughness },
         { type : float,     name : metallic },
+        { type : float,     name : reflectance },
         { type : int,       name : hasTexture },
         { type : sampler2d, name : baseColorMap }
     ]
@@ -23,5 +24,6 @@ fragment {
         material.baseColor = c;
         material.roughness = materialParams.roughness;
         material.metallic = materialParams.metallic;
+        material.reflectance = materialParams.reflectance;
     }
 }

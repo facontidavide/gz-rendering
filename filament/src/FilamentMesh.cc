@@ -166,6 +166,23 @@ void FilamentSubMesh::Destroy()
 }
 
 //////////////////////////////////////////////////
+void FilamentMesh::PreRender()
+{
+  BaseMesh::PreRender();
+  // filament casts shadows per renderable, gz per material: cast if any
+  // submesh material does
+  bool cast = false;
+  for (auto it = this->subMeshes->Begin(); it != this->subMeshes->End(); ++it)
+  {
+    MaterialPtr mat = (*it)->Material();
+    cast = cast || (mat && mat->CastShadows());
+  }
+  auto &rm = Engine()->getRenderableManager();
+  if (rm.hasComponent(this->entity))
+    rm.setCastShadows(rm.getInstance(this->entity), cast);
+}
+
+//////////////////////////////////////////////////
 void FilamentSubMesh::PreRender()
 {
   BaseSubMesh::PreRender();

@@ -194,7 +194,11 @@ void FilamentLight::UpdateLight()
   lm.setShadowCaster(inst, this->castShadows);
   // With the camera exposure fixed at 1, a directional light of pi lux on a
   // Lambertian surface gives albedo * cos(theta): the classic diffuse term.
-  const float power = static_cast<float>(GZ_PI * this->intensity);
+  // ogre2 measures as ~0.8 * albedo * cos(theta) (linear) at default
+  // roughness, hence the extra factor.
+  constexpr double kOgre2Match = 0.8;
+  const float power =
+      static_cast<float>(GZ_PI * kOgre2Match * this->intensity);
   if (this->type == filament::LightManager::Type::DIRECTIONAL ||
       this->type == filament::LightManager::Type::SUN)
   {

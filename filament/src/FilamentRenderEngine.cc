@@ -190,7 +190,8 @@ filament::Material *FilamentRenderEngine::Material(const std::string &_name)
 }
 
 //////////////////////////////////////////////////
-filament::Texture *FilamentRenderEngine::Texture(const std::string &_path)
+filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
+    std::shared_ptr<const common::Image> _data)
 {
   auto it = this->dataPtr->textures.find(_path);
   if (it != this->dataPtr->textures.end())
@@ -204,19 +205,21 @@ filament::Texture *FilamentRenderEngine::Texture(const std::string &_path)
     const unsigned char white[4] = {255, 255, 255, 255};
     img.SetFromData(white, 1, 1, common::Image::RGBA_INT8);
   }
-  else
+  else if (!_data)
   {
     img.Load(_path);
   }
-  if (!img.Valid())
+  // common::Image is not safely copyable: read in-memory data in place
+  const common::Image &src = _data ? *_data : img;
+  if (!src.Valid())
   {
     gzerr << "Unable to load texture image [" << _path << "]" << std::endl;
     return nullptr;
   }
 
-  const unsigned int w = img.Width();
-  const unsigned int h = img.Height();
-  std::vector<unsigned char> rgba = img.RGBAData();
+  const unsigned int w = src.Width();
+  const unsigned int h = src.Height();
+  std::vector<unsigned char> rgba = src.RGBAData();
   if (rgba.size() != static_cast<size_t>(w) * h * 4u)
   {
     gzerr << "Unexpected texture data size for [" << _path << "]"

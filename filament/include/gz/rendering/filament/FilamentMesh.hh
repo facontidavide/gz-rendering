@@ -54,6 +54,8 @@ namespace gz
 
       public: virtual void SetLayers(uint8_t _layers) override;
 
+      public: virtual void PreRender() override;
+
       /// \brief Temporarily render every submesh with _instance
       public: void OverrideMaterial(filament::MaterialInstance *_instance);
 

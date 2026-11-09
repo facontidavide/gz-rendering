@@ -19,6 +19,8 @@
 
 #include <map>
 #include <memory>
+
+#include <gz/common/Image.hh>
 #include <string>
 
 #include <gz/common/SingletonT.hh>
@@ -87,7 +89,10 @@ namespace gz
       public: filament::Material *Material(const std::string &_name);
 
       /// \brief Get (and lazily load, cached) a 2D texture from an image file
-      public: filament::Texture *Texture(const std::string &_path);
+      /// \brief Cached texture by name. Loaded from _data when given, else
+      /// from the file _path; an empty name gives a 1x1 white texture.
+      public: filament::Texture *Texture(const std::string &_path,
+          std::shared_ptr<const common::Image> _data = nullptr);
 
       /// \brief Get the resource path used to find compiled materials
       public: std::string ResourcePath() const;

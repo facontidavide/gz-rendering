@@ -97,11 +97,13 @@ void FilamentScene::SetAmbientLight(const math::Color &_color)
     return;
   if (this->ambientLight)
     engine->destroy(this->ambientLight);
-  // A single-band SH is a uniform irradiance: classic constant ambient term
+  // A single-band SH is a uniform irradiance: classic constant ambient term.
+  // Intensity calibrated against ogre2, whose ambient term measures as
+  // ~0.32 * ambient * albedo (linear) on a white plane.
   filament::math::float3 sh[1] = {FilamentConversions::ToFloat3(_color)};
   this->ambientLight = filament::IndirectLight::Builder()
       .irradiance(1, sh)
-      .intensity(1.0f)
+      .intensity(1.0f / 3.0f)
       .build(*engine);
   this->scene->setIndirectLight(this->ambientLight);
 }
