@@ -101,6 +101,16 @@ void FilamentMesh::OverrideMaterial(filament::MaterialInstance *_instance)
 }
 
 //////////////////////////////////////////////////
+void FilamentMesh::OverrideMaterial(unsigned int _index,
+    filament::MaterialInstance *_instance)
+{
+  auto sub = std::dynamic_pointer_cast<FilamentSubMesh>(
+      this->subMeshes->GetByIndex(_index));
+  if (sub)
+    sub->ApplyInstance(_instance);
+}
+
+//////////////////////////////////////////////////
 void FilamentMesh::RestoreMaterials()
 {
   for (auto it = this->subMeshes->Begin(); it != this->subMeshes->End(); ++it)

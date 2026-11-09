@@ -1,0 +1,100 @@
+/*
+ * Copyright (C) 2026 Open Source Robotics Foundation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+#ifndef GZ_RENDERING_FILAMENT_FILAMENTTHERMALCAMERA_HH_
+#define GZ_RENDERING_FILAMENT_FILAMENTTHERMALCAMERA_HH_
+
+#include <string>
+#include <vector>
+
+#include <gz/common/Event.hh>
+
+#include "gz/rendering/base/BaseThermalCamera.hh"
+#include "gz/rendering/filament/FilamentCamera.hh"
+#include "gz/rendering/filament/FilamentRenderTypes.hh"
+#include "gz/rendering/filament/Export.hh"
+
+namespace filament
+{
+  class MaterialInstance;
+}
+
+namespace gz
+{
+  namespace rendering
+  {
+    inline namespace GZ_RENDERING_VERSION_NAMESPACE {
+    //
+    /// \brief Thermal camera. Every submesh is drawn with a flat id color;
+    /// the temperature of each id is computed on the CPU with the same
+    /// formula and 8 bit intermediate quantization as ogre2's thermal
+    /// shader, so outputs are comparable. Heat signature textures are not
+    /// supported (those objects are treated as non heat sources).
+    class GZ_RENDERING_FILAMENT_VISIBLE FilamentThermalCamera :
+      public BaseThermalCamera<FilamentCamera>
+    {
+      protected: FilamentThermalCamera();
+
+      public: virtual ~FilamentThermalCamera();
+
+      public: virtual void Render() override;
+
+      public: virtual void PostRender() override;
+
+      public: virtual common::ConnectionPtr ConnectNewThermalFrame(
+          std::function<void(const uint16_t *, unsigned int, unsigned int,
+          unsigned int, const std::string &)> _subscriber) override;
+
+      public: virtual void Destroy() override;
+
+      /// \brief Output format, L16 (default) or L8. The render target
+      /// itself holds RGB8 ids.
+      public: virtual PixelFormat ImageFormat() const override;
+
+      public: virtual void SetImageFormat(PixelFormat _format,
+                  bool _reinterpretable = false) override;
+
+      protected: virtual void Init() override;
+
+      protected: virtual RenderTargetPtr RenderTarget() const override;
+
+      /// \brief Output value of a pixel whose color pass value in ogre2
+      /// would be _rgba (8 bit), see thermal_camera_fs.glsl
+      private: uint16_t Encode(const float _rgba[4]) const;
+
+      /// \brief Flat material instance for id _id (0 is the background)
+      private: filament::MaterialInstance *IdInstance(uint32_t _id);
+
+      private: std::vector<filament::MaterialInstance *> idInstances;
+
+      /// \brief Output value per id, index 0 is the background
+      private: std::vector<uint16_t> idValue;
+
+      private: std::vector<uint16_t> thermalImage;
+
+      private: bool textureCreated{false};
+
+      private: PixelFormat format{PF_L16};
+
+      private: common::EventT<void(const uint16_t *, unsigned int,
+          unsigned int, unsigned int, const std::string &)> newThermalFrame;
+
+      private: friend class FilamentScene;
+    };
+    }
+  }
+}
+#endif

@@ -59,6 +59,10 @@ namespace gz
       /// \brief Temporarily render every submesh with _instance
       public: void OverrideMaterial(filament::MaterialInstance *_instance);
 
+      /// \brief Temporarily render submesh _index with _instance
+      public: void OverrideMaterial(unsigned int _index,
+                  filament::MaterialInstance *_instance);
+
       /// \brief Undo OverrideMaterial
       public: void RestoreMaterials();
 

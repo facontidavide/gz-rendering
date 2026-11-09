@@ -115,11 +115,8 @@ void FilamentDepthCamera::Render()
   if (!this->depthInstance)
     this->CreateDepthTexture();
 
-  const double aspect = this->AspectRatio();
-  const double hfovDeg = this->HFOV().Degree();
-  this->camera->setProjection(hfovDeg, aspect,
-      this->NearClipPlane() * kNearScale, this->FarClipPlane() * kFarScale,
-      filament::Camera::Fov::HORIZONTAL);
+  this->SetClampedProjection(this->NearClipPlane() * kNearScale,
+      this->FarClipPlane() * kFarScale);
 
   this->view->setVisibleLayers(0xff,
       FilamentConversions::ToLayers(this->VisibilityMask()));

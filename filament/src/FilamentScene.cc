@@ -26,6 +26,7 @@
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
 #include "gz/rendering/filament/FilamentGpuRays.hh"
 #include "gz/rendering/filament/FilamentSegmentationCamera.hh"
+#include "gz/rendering/filament/FilamentThermalCamera.hh"
 #include "gz/rendering/filament/FilamentLight.hh"
 #include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
@@ -175,6 +176,15 @@ DepthCameraPtr FilamentScene::CreateDepthCameraImpl(unsigned int _id,
     const std::string &_name)
 {
   FilamentDepthCameraPtr camera(new FilamentDepthCamera);
+  bool result = this->InitObject(camera, _id, _name);
+  return (result) ? camera : nullptr;
+}
+
+//////////////////////////////////////////////////
+ThermalCameraPtr FilamentScene::CreateThermalCameraImpl(
+    unsigned int _id, const std::string &_name)
+{
+  FilamentThermalCameraPtr camera(new FilamentThermalCamera);
   bool result = this->InitObject(camera, _id, _name);
   return (result) ? camera : nullptr;
 }

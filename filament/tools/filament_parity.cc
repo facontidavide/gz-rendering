@@ -42,6 +42,8 @@
 #include <gz/rendering/RenderingIface.hh>
 #include <gz/rendering/Scene.hh>
 #include <gz/rendering/SegmentationCamera.hh>
+#include <gz/rendering/ThermalCamera.hh>
+#include <gz/rendering/Material.hh>
 #include <gz/rendering/Visual.hh>
 
 using namespace gz;
@@ -62,6 +64,14 @@ namespace
     // labels 1..3 on most objects, some left unlabeled (background)
     if (g_added++ % 4 != 0)
       v->SetUserData("label", 1 + g_added % 3);
+    // assorted diffuse colors (thermal uses them for non heat sources),
+    // every third object is a heat source
+    MaterialPtr mat = _scene->CreateMaterial();
+    mat->SetDiffuse(0.1 + 0.08 * g_added, 0.9 - 0.07 * g_added,
+        0.3 + 0.05 * (g_added % 5));
+    v->SetMaterial(mat);
+    if (g_added % 3 == 0)
+      v->SetUserData("temperature", 280.0f + 7.3f * g_added);
     _scene->RootVisual()->AddChild(v);
   }
 
@@ -243,6 +253,37 @@ int main(int _argc, char **_argv)
       WriteBytes(dir, "seg_" + t + "_fromcolored", labels.data(), 320, 240,
           index);
     }
+    conn.reset();
+  }
+
+  for (PixelFormat fmt : {PF_L16, PF_L8})
+  {
+    const std::string name = fmt == PF_L16 ? "thermal16" : "thermal8";
+    ThermalCameraPtr th = scene->CreateThermalCamera(name);
+    th->SetLocalPose({0, 0, 1, 0, 0.2, 0});
+    th->SetImageWidth(320);
+    th->SetImageHeight(240);
+    th->SetAspectRatio(320.0 / 240.0);
+    th->SetHFOV(GZ_PI / 2);
+    th->SetNearClipPlane(0.5);
+    th->SetFarClipPlane(10);
+    th->SetImageFormat(fmt);
+    th->SetAmbientTemperature(296.0f);
+    th->SetAmbientTemperatureRange(4.0f);
+    th->SetHeatSourceTemperatureRange(2.0f);
+    th->SetLinearResolution(fmt == PF_L16 ? 0.01f : 3.0f);
+    th->SetMinTemperature(250.0f);
+    th->SetMaxTemperature(fmt == PF_L16 ? 400.0f : 600.0f);
+    scene->RootVisual()->AddChild(th);
+    std::vector<uint16_t> img(320 * 240);
+    auto conn = th->ConnectNewThermalFrame(
+        [&](const uint16_t *_d, unsigned int, unsigned int, unsigned int,
+            const std::string &) {
+          std::memcpy(img.data(), _d, img.size() * sizeof(uint16_t)); });
+    auto tm = Time([&] { th->Update(); }, frames);
+    timing << name << " " << tm.first << " " << tm.second << "\n";
+    std::vector<float> f(img.begin(), img.end());
+    Write(dir, name, f.data(), 320, 240, 1, index);
     conn.reset();
   }
 

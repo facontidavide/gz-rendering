@@ -171,6 +171,21 @@ void FilamentCamera::CreateRenderTexture()
 }
 
 //////////////////////////////////////////////////
+void FilamentCamera::SetClampedProjection(double _renderNear,
+    double _renderFar)
+{
+  using filament::Camera;
+  const double hfovDeg = this->HFOV().Degree();
+  const double aspect = this->AspectRatio();
+  this->camera->setCustomProjection(
+      Camera::projection(Camera::Fov::HORIZONTAL, hfovDeg, aspect,
+          _renderNear, _renderFar),
+      Camera::projection(Camera::Fov::HORIZONTAL, hfovDeg, aspect,
+          this->NearClipPlane(), this->FarClipPlane()),
+      this->NearClipPlane(), this->FarClipPlane());
+}
+
+//////////////////////////////////////////////////
 void FilamentCamera::UpdateProjection()
 {
   if (!this->camera)

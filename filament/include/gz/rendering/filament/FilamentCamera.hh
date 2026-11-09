@@ -63,6 +63,13 @@ namespace gz
 
       protected: virtual void CreateRenderTexture();
 
+      /// \brief Render with [_renderNear, _renderFar] but cull against the
+      /// camera's own clip planes. With a closer near plane this emulates
+      /// ogre2's depth clamp: geometry crossing the near plane is drawn,
+      /// objects entirely in front of it are culled.
+      protected: void SetClampedProjection(double _renderNear,
+                     double _renderFar);
+
       /// \brief Push HFOV / aspect / near / far into the filament camera
       protected: void UpdateProjection();
 
