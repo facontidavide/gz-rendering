@@ -202,13 +202,14 @@ filament::MaterialInstance *FilamentThermalCamera::HeatSignatureInstance(
     if (rgba.size() == static_cast<size_t>(w) * h * 4u && !rgba.empty())
     {
       auto &engine = *FilamentRenderEngine::Instance()->FilamentEngine();
-      // the shader reads red only. Rows are NOT flipped, unlike
-      // FilamentRenderEngine::Texture: with the mesh's flipped V that is
-      // the orientation ogre2's heat signature pass samples (checked with
+      // the shader reads red only. Rows flipped like
+      // FilamentRenderEngine::Texture (bottom row first), so heat
+      // signatures and diffuse textures share the mesh UVs (checked with
       // filament_parity PARITY_HEATSIG=1)
       auto *buf = new unsigned char[static_cast<size_t>(w) * h];
-      for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i)
-        buf[i] = rgba[i * 4u];
+      for (size_t y = 0; y < h; ++y)
+        for (size_t x = 0; x < w; ++x)
+          buf[y * w + x] = rgba[((h - 1u - y) * w + x) * 4u];
       tex = filament::Texture::Builder()
           .width(w).height(h).levels(1)
           .sampler(filament::Texture::Sampler::SAMPLER_2D)

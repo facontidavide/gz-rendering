@@ -24,6 +24,7 @@
 // engineParam is set to "1", e.g. "opengl" for filament
 // PARITY_HEATSIG=1: adds heat signature objects (thermal outputs)
 // PARITY_CAPSULE=1: adds a tilted capsule, resized after it is attached
+// PARITY_TEXBOX=<png>: textured box in the RGB overview (texture orientation)
 // PARITY_WIDEANGLE=1: only the wide-angle camera geometry checks (RGB images,
 // per-object centroids, cutoff circle radius, Project3d), see WideAngle()
 // PARITY_PARTICLES=1: only particle statistics, with a particle emitter in
@@ -856,6 +857,20 @@ int main(int _argc, char **_argv)
     sun->SetDirection(-0.5, -0.5, -1);
     sun->SetDiffuseColor(0.9, 0.9, 0.9);
     scene->RootVisual()->AddChild(sun);
+    // PARITY_TEXBOX=<png>: a large textured box facing the overview camera,
+    // to check texture orientation (use an image with distinct top/bottom)
+    if (const char *tex = std::getenv("PARITY_TEXBOX"))
+    {
+      VisualPtr v = scene->CreateVisual();
+      v->AddGeometry(scene->CreateBox());
+      v->SetLocalPose({-3, 3, 1.5, 0, 0, -GZ_PI / 4});
+      v->SetLocalScale(2, 2, 2);
+      MaterialPtr m = scene->CreateMaterial();
+      m->SetDiffuse(1, 1, 1);
+      m->SetTexture(tex);
+      v->SetMaterial(m);
+      scene->RootVisual()->AddChild(v);
+    }
     CameraPtr cam = scene->CreateCamera("rgb");
     cam->SetLocalPose({-8, 8, 5, 0, 0.4, -GZ_PI / 4});
     cam->SetImageWidth(640);

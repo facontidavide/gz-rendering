@@ -239,8 +239,11 @@ bool FilamentMeshFactory::Load(FilamentMeshPtr _mesh,
       {
         if (hasUv)
         {
+          // gz UVs have a top-left origin (like Ogre). Textures are
+          // uploaded bottom row first and matc flips uv0.y in every material
+          // (flipUV, on by default), so the UVs go in as they are.
           math::Vector2d t = s->TexCoord(j);
-          uv[j] = {static_cast<float>(t.X()), 1.0f - static_cast<float>(t.Y())};
+          uv[j] = {static_cast<float>(t.X()), static_cast<float>(t.Y())};
         }
         else
         {
