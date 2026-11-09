@@ -161,16 +161,34 @@ void FilamentMaterial::PreRender()
     this->loadedTexture.clear();
   }
 
+  // PBR maps. Data maps are linear, color maps (emissive, light) sRGB like
+  // ogre2; the environment map is a cube map.
+  auto *engine = FilamentRenderEngine::Instance();
+  std::array<filament::Texture *, MAP_COUNT> mapTextures{};
+  for (int i = 0; i < MAP_COUNT; ++i)
+  {
+    Map &m = this->maps[i];
+    if (!m.name.empty() && !m.loaded)
+    {
+      m.texture = i == ENVIRONMENT ? engine->CubeTexture(m.name, true) :
+          engine->Texture(m.name, m.data, i == EMISSIVE || i == LIGHT);
+      m.loaded = true;
+    }
+    mapTextures[i] = m.texture;
+  }
+
   // Pushing parameters dirties the instance's uniform buffer, which filament
   // then re-uploads: only do it when something changed.
   const math::Color d = this->Diffuse();
   const math::Color s = this->Specular();
-  const std::array<float, 11> key = {d.R(), d.G(), d.B(),
+  const math::Color e = this->Emissive();
+  const std::array<float, 16> key = {d.R(), d.G(), d.B(),
       static_cast<float>(this->Transparency()), s.R(), s.G(), s.B(),
       this->Roughness(), this->Metalness(),
-      this->LightingEnabled() ? 1.0f : 0.0f, 0.0f};
+      this->LightingEnabled() ? 1.0f : 0.0f, e.R(), e.G(), e.B(),
+      static_cast<float>(this->lightMapUvSet), 0.0f, 0.0f};
   if (this->pushed && key == this->pushedKey &&
-      this->texture == this->pushedTexture)
+      this->texture == this->pushedTexture && mapTextures == this->pushedMaps)
   {
     return;
   }
@@ -179,6 +197,7 @@ void FilamentMaterial::PreRender()
   this->pushed = true;
   this->pushedKey = key;
   this->pushedTexture = this->texture;
+  this->pushedMaps = mapTextures;
 }
 
 //////////////////////////////////////////////////
@@ -206,6 +225,216 @@ float FilamentMaterial::Metalness() const
 }
 
 //////////////////////////////////////////////////
+void FilamentMaterial::SetMap(MapSlot _slot, const std::string &_name,
+    const std::shared_ptr<const common::Image> &_img)
+{
+  Map &m = this->maps[_slot];
+  m.name = _name;
+  m.data = _name.empty() ? nullptr : _img;
+  m.texture = nullptr;
+  m.loaded = false;
+}
+
+//////////////////////////////////////////////////
+bool FilamentMaterial::HasNormalMap() const
+{
+  return !this->maps[NORMAL].name.empty();
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::NormalMap() const
+{
+  return this->maps[NORMAL].name;
+}
+
+//////////////////////////////////////////////////
+std::shared_ptr<const common::Image> FilamentMaterial::NormalMapData() const
+{
+  return this->maps[NORMAL].data;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetNormalMap(const std::string &_name,
+    const std::shared_ptr<const common::Image> &_img)
+{
+  this->SetMap(NORMAL, _name, _img);
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::ClearNormalMap()
+{
+  this->SetMap(NORMAL, "", nullptr);
+}
+
+//////////////////////////////////////////////////
+bool FilamentMaterial::HasRoughnessMap() const
+{
+  return !this->maps[ROUGHNESS].name.empty();
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::RoughnessMap() const
+{
+  return this->maps[ROUGHNESS].name;
+}
+
+//////////////////////////////////////////////////
+std::shared_ptr<const common::Image> FilamentMaterial::RoughnessMapData() const
+{
+  return this->maps[ROUGHNESS].data;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetRoughnessMap(const std::string &_name,
+    const std::shared_ptr<const common::Image> &_img)
+{
+  this->SetMap(ROUGHNESS, _name, _img);
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::ClearRoughnessMap()
+{
+  this->SetMap(ROUGHNESS, "", nullptr);
+}
+
+//////////////////////////////////////////////////
+bool FilamentMaterial::HasMetalnessMap() const
+{
+  return !this->maps[METALNESS].name.empty();
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::MetalnessMap() const
+{
+  return this->maps[METALNESS].name;
+}
+
+//////////////////////////////////////////////////
+std::shared_ptr<const common::Image> FilamentMaterial::MetalnessMapData() const
+{
+  return this->maps[METALNESS].data;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetMetalnessMap(const std::string &_name,
+    const std::shared_ptr<const common::Image> &_img)
+{
+  this->SetMap(METALNESS, _name, _img);
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::ClearMetalnessMap()
+{
+  this->SetMap(METALNESS, "", nullptr);
+}
+
+//////////////////////////////////////////////////
+bool FilamentMaterial::HasEnvironmentMap() const
+{
+  return !this->maps[ENVIRONMENT].name.empty();
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::EnvironmentMap() const
+{
+  return this->maps[ENVIRONMENT].name;
+}
+
+//////////////////////////////////////////////////
+std::shared_ptr<const common::Image> FilamentMaterial::EnvironmentMapData() const
+{
+  return this->maps[ENVIRONMENT].data;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetEnvironmentMap(const std::string &_name,
+    const std::shared_ptr<const common::Image> &_img)
+{
+  this->SetMap(ENVIRONMENT, _name, _img);
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::ClearEnvironmentMap()
+{
+  this->SetMap(ENVIRONMENT, "", nullptr);
+}
+
+//////////////////////////////////////////////////
+bool FilamentMaterial::HasEmissiveMap() const
+{
+  return !this->maps[EMISSIVE].name.empty();
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::EmissiveMap() const
+{
+  return this->maps[EMISSIVE].name;
+}
+
+//////////////////////////////////////////////////
+std::shared_ptr<const common::Image> FilamentMaterial::EmissiveMapData() const
+{
+  return this->maps[EMISSIVE].data;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetEmissiveMap(const std::string &_name,
+    const std::shared_ptr<const common::Image> &_img)
+{
+  this->SetMap(EMISSIVE, _name, _img);
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::ClearEmissiveMap()
+{
+  this->SetMap(EMISSIVE, "", nullptr);
+}
+
+//////////////////////////////////////////////////
+bool FilamentMaterial::HasLightMap() const
+{
+  return !this->maps[LIGHT].name.empty();
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::LightMap() const
+{
+  return this->maps[LIGHT].name;
+}
+
+//////////////////////////////////////////////////
+unsigned int FilamentMaterial::LightMapTexCoordSet() const
+{
+  return this->lightMapUvSet;
+}
+
+//////////////////////////////////////////////////
+std::shared_ptr<const common::Image> FilamentMaterial::LightMapData() const
+{
+  return this->maps[LIGHT].data;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetLightMap(const std::string &_name,
+    const std::shared_ptr<const common::Image> &_img, unsigned int _uvSet)
+{
+  this->SetMap(LIGHT, _name, _img);
+  this->lightMapUvSet = _name.empty() ? 0u : _uvSet;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::ClearLightMap()
+{
+  this->SetLightMap("", nullptr, 0u);
+}
+
+//////////////////////////////////////////////////
+MaterialType FilamentMaterial::Type() const
+{
+  return MaterialType::MT_PBS;
+}
+
+//////////////////////////////////////////////////
 filament::Texture *FilamentMaterial::FilamentTexture() const
 {
   return this->texture;
@@ -223,8 +452,9 @@ void FilamentMaterial::Update(filament::MaterialInstance *_instance)
       filament::TextureSampler::MagFilter::LINEAR,
       filament::TextureSampler::WrapMode::REPEAT);
   sampler.setAnisotropy(this->anisotropy);
+  auto *engine = FilamentRenderEngine::Instance();
   _instance->setParameter("baseColorMap", this->texture ? this->texture :
-      FilamentRenderEngine::Instance()->Texture(""), sampler);
+      engine->Texture(""), sampler);
   if (_instance == this->lit)
   {
     _instance->setParameter("roughness",
@@ -238,5 +468,48 @@ void FilamentMaterial::Update(filament::MaterialInstance *_instance)
     const double spec = std::clamp((s.R() + s.G() + s.B()) / 3.0, 0.0, 1.0);
     _instance->setParameter("reflectance",
         static_cast<float>(0.5 * std::sqrt(spec)));
+
+    // PBR maps, with ogre2's (Ogre PBS) semantics: roughness and metalness
+    // maps (red channel) scale the scalars, the emissive map is tinted by the
+    // emissive color when that is not black, the light map takes the
+    // emissive slot and is modulated by the diffuse color, the environment
+    // map is a reflection cube map. Unset maps get a 1x1 default and a
+    // cleared flag bit.
+    filament::Texture *white = engine->Texture("");
+    int flags = 0;
+    for (int i = 0; i < MAP_COUNT; ++i)
+    {
+      filament::Texture *t = this->maps[i].texture;
+      if (t)
+        flags |= 1 << i;
+      static const char *kNames[MAP_COUNT] = {"normalMap", "roughnessMap",
+          "metalnessMap", "emissiveMap", "lightMap", "environmentMap"};
+      if (i == ENVIRONMENT)
+      {
+        filament::TextureSampler cube(
+            filament::TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
+            filament::TextureSampler::MagFilter::LINEAR,
+            filament::TextureSampler::WrapMode::CLAMP_TO_EDGE);
+        _instance->setParameter(kNames[i], t ? t : engine->CubeTexture(""),
+            cube);
+        _instance->setParameter("environmentMapLod",
+            t ? static_cast<float>(t->getLevels() - 1) : 0.0f);
+      }
+      else
+      {
+        _instance->setParameter(kNames[i], t ? t : white, sampler);
+      }
+    }
+    _instance->setParameter("mapFlags", flags);
+    _instance->setParameter("lightMapUvSet",
+        static_cast<int>(this->lightMapUvSet));
+    const math::Color e = this->Emissive();
+    filament::math::float3 emissive = {e.R(), e.G(), e.B()};
+    // ogre2 only applies the emissive color when it is not black
+    const bool emissiveConstant = e.R() > 0 || e.G() > 0 || e.B() > 0;
+    filament::math::float3 mapTint = emissiveConstant ? emissive :
+        filament::math::float3{1.0f, 1.0f, 1.0f};
+    _instance->setParameter("emissive", emissive);
+    _instance->setParameter("emissiveMapTint", mapTint);
   }
 }
