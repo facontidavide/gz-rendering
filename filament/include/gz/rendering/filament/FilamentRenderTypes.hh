@@ -36,6 +36,7 @@ namespace gz
     class FilamentThermalCamera;
     class FilamentDirectionalLight;
     class FilamentGeometry;
+    class FilamentHeightmap;
     class FilamentLight;
     class FilamentMaterial;
     class FilamentMesh;
@@ -68,6 +69,7 @@ namespace gz
     typedef shared_ptr<FilamentThermalCamera>      FilamentThermalCameraPtr;
     typedef shared_ptr<FilamentDirectionalLight>   FilamentDirectionalLightPtr;
     typedef shared_ptr<FilamentGeometry>           FilamentGeometryPtr;
+    typedef shared_ptr<FilamentHeightmap>          FilamentHeightmapPtr;
     typedef shared_ptr<FilamentLight>              FilamentLightPtr;
     typedef shared_ptr<FilamentMaterial>           FilamentMaterialPtr;
     typedef shared_ptr<FilamentMesh>               FilamentMeshPtr;

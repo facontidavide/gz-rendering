@@ -248,7 +248,8 @@ void FilamentThermalCamera::Render()
       }
       else
       {
-        MaterialPtr mat = mesh->SubMeshByIndex(i)->Material();
+        MaterialPtr mat = mesh->thermalWhite ? nullptr :
+            mesh->SubMeshByIndex(i)->Material();
         const math::Color c = mat ? mat->Diffuse() : math::Color::White;
         auto fmat = std::dynamic_pointer_cast<FilamentMaterial>(mat);
         if (fmat && fmat->FilamentTexture())

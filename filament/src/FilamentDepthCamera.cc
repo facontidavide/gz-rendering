@@ -55,7 +55,7 @@ FilamentDepthCamera::~FilamentDepthCamera()
 void FilamentDepthCamera::Init()
 {
   FilamentCamera::Init();
-  // depth values must not be touched by shadows or any screen-space effect
+  // no shadow maps for the depth pass, nor any screen-space effect
   this->view->setShadowingEnabled(false);
   this->view->setPostProcessingEnabled(false);
 }
@@ -142,7 +142,10 @@ void FilamentDepthCamera::Render()
     this->colorTexture->PreRender();
     this->colorTexture->SetClearColor(
         FilamentConversions::ToFloat4(this->scene->BackgroundColor()));
+    // ogre2 renders this pass with its shadow node, like a camera
+    this->view->setShadowingEnabled(true);
     this->colorTexture->Render(this->view);
+    this->view->setShadowingEnabled(false);
   }
 
   // Depth pass: every mesh drawn with the linear-depth material.
