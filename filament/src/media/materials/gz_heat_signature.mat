@@ -1,0 +1,30 @@
+// Thermal camera heat signature: the red channel of a linear texture mapped
+// to [minTemp, maxTemp] Kelvin and normalized like ogre2's
+// heat_signature_fs.glsl. Alpha 0.5 tells the thermal camera's readback
+// that red holds a normalized temperature (ids have alpha 1, colors 0).
+material {
+    name : gz_heat_signature,
+    shadingModel : unlit,
+    blending : opaque,
+    depthWrite : true,
+    requires : [ uv0 ],
+    parameters : [
+        { type : float,     name : minTemp },
+        { type : float,     name : maxTemp },
+        { type : int,       name : bitDepth },
+        { type : float,     name : resolution },
+        { type : sampler2d, name : heatMap }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        float heat = texture(materialParams_heatMap, getUV0()).x;
+        float mappedKelvin = ((materialParams.maxTemp -
+            materialParams.minTemp) * heat) + materialParams.minTemp;
+        float v = mappedKelvin / ((float(1 << materialParams.bitDepth) -
+            1.0) * materialParams.resolution);
+        material.baseColor = vec4(v, 0.0, 0.0, 0.5);
+    }
+}

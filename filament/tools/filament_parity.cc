@@ -22,6 +22,7 @@
 //
 // usage: filament_parity <engine> <outdir> [timingFrames] [engineParam]
 // engineParam is set to "1", e.g. "opengl" for filament
+// PARITY_HEATSIG=1: adds heat signature objects (thermal outputs)
 // PARITY_WIDEANGLE=1: only the wide-angle camera geometry checks (RGB images,
 // per-object centroids, cutoff circle radius, Project3d), see WideAngle()
 
@@ -162,6 +163,32 @@ namespace
       model->AddChild(link);
     }
     _scene->RootVisual()->AddChild(model);
+
+    // PARITY_HEATSIG=1: heat signature textures in the thermal view, a
+    // uniform gray one (magnified) and texture.png's red channel
+    if (std::getenv("PARITY_HEATSIG"))
+    {
+      const std::string tex = std::string(PROJECT_SOURCE_PATH) +
+          "/test/media/materials/textures/";
+      auto heat = [&](GeometryPtr _geom, const math::Pose3d &_pose,
+          double _scale, const std::string &_png, float _min, float _max)
+      {
+        VisualPtr v = _scene->CreateVisual();
+        v->AddGeometry(_geom);
+        v->SetLocalPose(_pose);
+        v->SetLocalScale(_scale);
+        v->SetUserData("temperature", tex + _png);
+        v->SetUserData("minTemp", _min);
+        v->SetUserData("maxTemp", _max);
+        _scene->RootVisual()->AddChild(v);
+      };
+      heat(_scene->CreateBox(), {1.3, 1.4, 0.4, 0, 0, 0.3}, 0.5,
+          "gray_texture.png", 280.0f, 330.0f);
+      heat(_scene->CreateSphere(), {1.5, -1.3, 1.0, 0, 0, 0.5}, 0.7,
+          "texture.png", 260.0f, 390.0f);
+      heat(_scene->CreateBox(), {2.2, -0.2, 1.6, 0.2, 0.1, 0.4}, 0.5,
+          "texture.png", 270.0f, 380.0f);
+    }
 
     // optional asset meshes (PARITY_MESHES=a.dae:b.obj:...), with their own
     // materials, scaled to ~0.9 m and set on the floor in an arc in view

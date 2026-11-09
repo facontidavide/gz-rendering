@@ -19,6 +19,7 @@
 
 #include <map>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <gz/common/Event.hh>
@@ -43,8 +44,9 @@ namespace gz
     /// \brief Thermal camera. Every submesh is drawn with a flat id color;
     /// the temperature of each id is computed on the CPU with the same
     /// formula and 8 bit intermediate quantization as ogre2's thermal
-    /// shader, so outputs are comparable. Heat signature textures are not
-    /// supported (those objects are treated as non heat sources).
+    /// shader, so outputs are comparable. Heat signature textures (a string
+    /// "temperature" with "minTemp" / "maxTemp") are mapped on the GPU like
+    /// ogre2's heat_signature_fs.glsl.
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentThermalCamera :
       public BaseThermalCamera<FilamentCamera>
     {
@@ -84,7 +86,20 @@ namespace gz
       private: filament::MaterialInstance *TexturedInstance(
           filament::Texture *_texture, const math::Color &_diffuse);
 
+      /// \brief Heat signature instance for _visual, whose "temperature"
+      /// user data is the texture _texture; nullptr if it cannot be loaded
+      private: filament::MaterialInstance *HeatSignatureInstance(
+          const VisualPtr &_visual, const std::string &_texture);
+
       private: std::vector<filament::MaterialInstance *> idInstances;
+
+      /// \brief Heat signature textures by path (R8, one level, linear)
+      private: std::map<std::string, filament::Texture *> heatTextures;
+
+      /// \brief Heat signature instances keyed by (path, min, max,
+      /// bit depth, resolution)
+      private: std::map<std::tuple<std::string, float, float, int, float>,
+          filament::MaterialInstance *> heatInstances;
 
       /// \brief Textured objects that are not heat sources: unlit
       /// diffuse x texture with alpha 0, keyed by (texture, packed color)
