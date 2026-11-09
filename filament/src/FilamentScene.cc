@@ -20,6 +20,7 @@
 #include <filament/Engine.h>
 #include <filament/IndirectLight.h>
 #include <filament/Scene.h>
+#include <filament/Skybox.h>
 
 #include <gz/common/Console.hh>
 
@@ -84,6 +85,11 @@ void FilamentScene::Fini()
     engine->destroy(this->ambientLight);
     this->ambientLight = nullptr;
   }
+  if (engine && this->skybox)
+  {
+    engine->destroy(this->skybox);
+    this->skybox = nullptr;
+  }
   if (engine && this->scene)
   {
     engine->destroy(this->scene);
@@ -127,13 +133,55 @@ void FilamentScene::SetAmbientLight(const math::Color &_color)
     engine->destroy(this->ambientLight);
   // A single-band SH is a uniform irradiance: classic constant ambient term.
   // Intensity calibrated against ogre2, whose ambient term measures as
-  // ~0.32 * ambient * albedo (linear) on a white plane.
-  filament::math::float3 sh[1] = {FilamentConversions::ToFloat3(_color)};
+  // ~0.32 * ambient * albedo (linear) on a white plane. The 1/3 goes in the
+  // SH rather than the intensity, which also scales the skybox.
+  // ogre2's fixed ambient (same upper and lower hemisphere) only lights the
+  // diffuse term: black reflections leave metals dark like there (gz-sim's
+  // default "gz-grey" primitive material is a metal).
+  filament::math::float3 sh[1] = {
+      FilamentConversions::ToFloat3(_color) * (1.0f / 3.0f)};
   this->ambientLight = filament::IndirectLight::Builder()
       .irradiance(1, sh)
-      .intensity(1.0f / 3.0f)
+      .reflections(FilamentRenderEngine::Instance()->CubeTexture(""))
+      .intensity(1.0f)
       .build(*engine);
   this->scene->setIndirectLight(this->ambientLight);
+}
+
+//////////////////////////////////////////////////
+void FilamentScene::SetSkyEnabled(bool _enabled)
+{
+  auto *engine = FilamentRenderEngine::Instance();
+  if (!this->scene || _enabled == (this->scene->getSkybox() != nullptr))
+    return;
+  if (!_enabled)
+  {
+    this->scene->setSkybox(nullptr);
+    return;
+  }
+  if (!this->skybox)
+  {
+    // ogre2's skybox: the same cube map, drawn without lighting
+    filament::Texture *cube = engine->CubeTexture("skybox.dds");
+    if (!cube)
+      return;
+    // intensity: used while no ambient light (IndirectLight) is set, else
+    // the IndirectLight's, which is 1 (see SetAmbientLight)
+    this->skybox = filament::Skybox::Builder().environment(cube)
+        .intensity(1.0f).build(*engine->FilamentEngine());
+    // drawn by color views only: the sensor views (depth, thermal,
+    // segmentation, lidar) leave the particle layer out
+    // ponytail: shares the particle layer, a layer of its own if a camera
+    // ever hides particles but wants the sky
+    this->skybox->setLayerMask(0xff, FilamentConversions::kParticleLayer);
+  }
+  this->scene->setSkybox(this->skybox);
+}
+
+//////////////////////////////////////////////////
+bool FilamentScene::SkyEnabled() const
+{
+  return this->scene && this->scene->getSkybox();
 }
 
 //////////////////////////////////////////////////
