@@ -182,6 +182,12 @@ void FilamentMaterial::PreRender()
 }
 
 //////////////////////////////////////////////////
+filament::Texture *FilamentMaterial::FilamentTexture() const
+{
+  return this->texture;
+}
+
+//////////////////////////////////////////////////
 void FilamentMaterial::Update(filament::MaterialInstance *_instance)
 {
   math::Color diffuse = this->Diffuse();

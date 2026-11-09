@@ -17,6 +17,7 @@
 #ifndef GZ_RENDERING_FILAMENT_FILAMENTTHERMALCAMERA_HH_
 #define GZ_RENDERING_FILAMENT_FILAMENTTHERMALCAMERA_HH_
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,7 @@
 namespace filament
 {
   class MaterialInstance;
+  class Texture;
 }
 
 namespace gz
@@ -78,7 +80,19 @@ namespace gz
       /// \brief Flat material instance for id _id (0 is the background)
       private: filament::MaterialInstance *IdInstance(uint32_t _id);
 
+      /// \brief Instance drawing diffuse x _texture, unlit, alpha 0
+      private: filament::MaterialInstance *TexturedInstance(
+          filament::Texture *_texture, const math::Color &_diffuse);
+
       private: std::vector<filament::MaterialInstance *> idInstances;
+
+      /// \brief Textured objects that are not heat sources: unlit
+      /// diffuse x texture with alpha 0, keyed by (texture, packed color)
+      private: std::map<std::pair<const void *, uint32_t>,
+          filament::MaterialInstance *> texturedInstances;
+
+      /// \brief RGBA readback buffer, reused
+      private: std::vector<uint8_t> rgbaRaw;
 
       /// \brief Output value per id, index 0 is the background
       private: std::vector<uint16_t> idValue;

@@ -19,7 +19,10 @@
 #include <cmath>
 #include <variant>
 
+#include <backend/PixelBufferDescriptor.h>
 #include <filament/Engine.h>
+#include <filament/Renderer.h>
+#include <filament/TextureSampler.h>
 #include <filament/Material.h>
 #include <filament/MaterialInstance.h>
 #include <filament/Camera.h>
@@ -31,6 +34,7 @@
 #include "gz/rendering/Material.hh"
 #include "gz/rendering/PixelFormat.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
+#include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
@@ -90,8 +94,11 @@ void FilamentThermalCamera::Destroy()
   {
     for (auto *mi : this->idInstances)
       engine->destroy(mi);
+    for (auto &it : this->texturedInstances)
+      engine->destroy(it.second);
   }
   this->idInstances.clear();
+  this->texturedInstances.clear();
   FilamentCamera::Destroy();
 }
 
@@ -136,6 +143,30 @@ filament::MaterialInstance *FilamentThermalCamera::IdInstance(uint32_t _id)
     this->idInstances.push_back(mi);
   }
   return this->idInstances[_id];
+}
+
+//////////////////////////////////////////////////
+filament::MaterialInstance *FilamentThermalCamera::TexturedInstance(
+    filament::Texture *_texture, const math::Color &_diffuse)
+{
+  const uint32_t key = _diffuse.AsRGBA();
+  auto it = this->texturedInstances.find({_texture, key});
+  if (it != this->texturedInstances.end())
+    return it->second;
+  filament::Material *mat =
+      FilamentRenderEngine::Instance()->Material("gz_unlit");
+  filament::MaterialInstance *mi = mat->createInstance();
+  // alpha 0 marks "color, not an id" (ids and the background have alpha 1)
+  mi->setParameter("baseColor", filament::math::float4{
+      _diffuse.R(), _diffuse.G(), _diffuse.B(), 0.0f});
+  mi->setParameter("hasTexture", 1);
+  // same sampler as FilamentMaterial uses for the RGB camera
+  mi->setParameter("baseColorMap", _texture, filament::TextureSampler(
+      filament::TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
+      filament::TextureSampler::MagFilter::LINEAR,
+      filament::TextureSampler::WrapMode::REPEAT));
+  this->texturedInstances[{_texture, key}] = mi;
+  return mi;
 }
 
 //////////////////////////////////////////////////
@@ -217,9 +248,18 @@ void FilamentThermalCamera::Render()
       }
       else
       {
-        // other objects: flat diffuse color, white without a material
         MaterialPtr mat = mesh->SubMeshByIndex(i)->Material();
         const math::Color c = mat ? mat->Diffuse() : math::Color::White;
+        auto fmat = std::dynamic_pointer_cast<FilamentMaterial>(mat);
+        if (fmat && fmat->FilamentTexture())
+        {
+          // ogre2 draws these unlit as diffuse x texture: the color varies
+          // per pixel, so it is converted per pixel in PostRender
+          mesh->OverrideMaterial(i,
+              this->TexturedInstance(fmat->FilamentTexture(), c));
+          continue;
+        }
+        // other objects: flat diffuse color, white without a material
         rgba[0] = Unorm8(c.R());
         rgba[1] = Unorm8(c.G());
         rgba[2] = Unorm8(c.B());
@@ -243,14 +283,29 @@ void FilamentThermalCamera::PostRender()
     return;
   const unsigned int width = this->ImageWidth();
   const unsigned int height = this->ImageHeight();
-  Image image(width, height, PF_R8G8B8);
-  this->renderTexture->Copy(image);
-  const uint8_t *src = image.Data<uint8_t>();
-  this->thermalImage.resize(static_cast<size_t>(width) * height);
-  for (size_t i = 0; i < this->thermalImage.size(); ++i)
+  const size_t len = static_cast<size_t>(width) * height;
+  this->rgbaRaw.resize(len * 4u);
+  FilamentRenderEngine::Instance()->Renderer()->readPixels(
+      this->renderTexture->Native(), 0, 0, width, height,
+      filament::backend::PixelBufferDescriptor(this->rgbaRaw.data(),
+      this->rgbaRaw.size(), filament::backend::PixelDataFormat::RGBA,
+      filament::backend::PixelDataType::UBYTE));
+  FilamentRenderEngine::Instance()->FilamentEngine()->flushAndWait();
+  const uint8_t *src = this->rgbaRaw.data();
+  this->thermalImage.resize(len);
+  for (size_t i = 0; i < len; ++i)
   {
-    const uint32_t id = (static_cast<uint32_t>(src[i * 3]) << 16) |
-        (static_cast<uint32_t>(src[i * 3 + 1]) << 8) | src[i * 3 + 2];
+    const uint8_t *p = src + i * 4u;
+    if (p[3] == 0u)
+    {
+      // textured object: its color, converted like ogre2's shader does
+      const float rgba[4] = {p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f,
+          1.0f};
+      this->thermalImage[i] = this->Encode(rgba);
+      continue;
+    }
+    const uint32_t id = (static_cast<uint32_t>(p[0]) << 16) |
+        (static_cast<uint32_t>(p[1]) << 8) | p[2];
     this->thermalImage[i] =
         id < this->idValue.size() ? this->idValue[id] : this->idValue[0];
   }

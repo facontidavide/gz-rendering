@@ -68,6 +68,9 @@ namespace gz
       /// \brief Active material instance (lit or unlit)
       public: filament::MaterialInstance *Instance() const;
 
+      /// \brief Diffuse texture on the GPU, nullptr if none
+      public: filament::Texture *FilamentTexture() const;
+
       protected: virtual void Init() override;
 
       protected: void Update(filament::MaterialInstance *_instance);

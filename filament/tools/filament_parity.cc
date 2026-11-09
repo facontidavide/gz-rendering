@@ -33,7 +33,12 @@
 #include <string>
 #include <vector>
 
+#include <cstdlib>
+#include <sstream>
+
 #include <gz/common/Console.hh>
+#include <gz/common/Mesh.hh>
+#include <gz/common/MeshManager.hh>
 #include <gz/math/Pose3.hh>
 
 #include <gz/rendering/DepthCamera.hh>
@@ -120,6 +125,37 @@ namespace
       model->AddChild(link);
     }
     _scene->RootVisual()->AddChild(model);
+
+    // optional asset meshes (PARITY_MESHES=a.dae:b.obj:...), with their own
+    // materials, scaled to ~0.9 m and set on the floor in an arc in view
+    const char *list = std::getenv("PARITY_MESHES");
+    std::vector<std::string> paths;
+    std::stringstream ss(list ? list : "");
+    for (std::string p; std::getline(ss, p, ':');)
+      if (!p.empty())
+        paths.push_back(p);
+    for (size_t k = 0; k < paths.size(); ++k)
+    {
+      const common::Mesh *m = common::MeshManager::Instance()->Load(paths[k]);
+      if (!m)
+      {
+        std::cerr << "cannot load " << paths[k] << std::endl;
+        continue;
+      }
+      const math::Vector3d size = m->Max() - m->Min();
+      const double scale = 0.9 / std::max({size.X(), size.Y(), size.Z()});
+      const double a = paths.size() > 1 ?
+          -0.7 + 1.4 * k / (paths.size() - 1) : 0.0;
+      VisualPtr v = _scene->CreateVisual();
+      v->AddGeometry(_scene->CreateMesh(paths[k]));
+      v->SetLocalPose({1.8 + 0.8 * std::cos(a), 2.6 * std::sin(a),
+          -m->Min().Z() * scale, 0, 0, 0.5 * k});
+      v->SetLocalScale(scale);
+      v->SetUserData("label", 4 + static_cast<int>(k % 2));
+      if (k % 2 == 0)
+        v->SetUserData("temperature", 300.0f + 4.1f * k);
+      _scene->RootVisual()->AddChild(v);
+    }
   }
 
   void WriteBytes(const std::string &_dir, const std::string &_name,
