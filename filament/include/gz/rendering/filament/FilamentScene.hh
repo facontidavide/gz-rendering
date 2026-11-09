@@ -202,6 +202,9 @@ namespace gz
       protected: virtual LightVisualPtr CreateLightVisualImpl(unsigned int _id,
                      const std::string &_name) override;
 
+      protected: virtual GizmoVisualPtr CreateGizmoVisualImpl(unsigned int _id,
+                     const std::string &_name) override;
+
       protected: virtual LightStorePtr Lights() const override;
 
       protected: virtual SensorStorePtr Sensors() const override;

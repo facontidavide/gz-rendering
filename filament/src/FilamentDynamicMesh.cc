@@ -259,6 +259,13 @@ void FilamentDynamicMesh::SetLineMaterial(MaterialPtr _material)
 }
 
 //////////////////////////////////////////////////
+void FilamentDynamicMesh::SetMaterial(MaterialPtr _material, bool _unique)
+{
+  FilamentMesh::SetMaterial(_material, _unique);
+  this->ApplyMaterial();
+}
+
+//////////////////////////////////////////////////
 void FilamentDynamicMesh::SetLayers(uint8_t _layers)
 {
   this->layers = _layers;

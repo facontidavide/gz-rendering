@@ -109,6 +109,12 @@ namespace gz
       /// \brief Side of the point squares, in pixels
       public: void SetPointSize(double _size);
 
+      /// \brief Binds the material, except on points, which keep theirs
+      public: virtual void SetMaterial(MaterialPtr _material,
+                                       bool _unique) override;
+
+      public: using FilamentMesh::SetMaterial;
+
       /// \brief Material of the lines and triangles. It is not owned.
       public: void SetLineMaterial(MaterialPtr _material);
 

@@ -31,6 +31,7 @@
 #include "gz/rendering/filament/FilamentDepthCamera.hh"
 #include "gz/rendering/filament/FilamentDynamicMesh.hh"
 #include "gz/rendering/filament/FilamentGrid.hh"
+#include "gz/rendering/filament/FilamentGizmoVisual.hh"
 #include "gz/rendering/filament/FilamentGpuRays.hh"
 #include "gz/rendering/filament/FilamentBoundingBoxCamera.hh"
 #include "gz/rendering/filament/FilamentHeightmap.hh"
@@ -47,6 +48,12 @@
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
+#include "gz/rendering/filament/FilamentCOMVisual.hh"
+#include "gz/rendering/filament/FilamentFrustumVisual.hh"
+#include "gz/rendering/filament/FilamentInertiaVisual.hh"
+#include "gz/rendering/filament/FilamentJointVisual.hh"
+#include "gz/rendering/filament/FilamentLidarVisual.hh"
+#include "gz/rendering/filament/FilamentLightVisual.hh"
 #include "gz/rendering/filament/FilamentVisual.hh"
 #include "gz/rendering/filament/FilamentWireBox.hh"
 
@@ -400,17 +407,22 @@ MarkerPtr FilamentScene::CreateMarkerImpl(unsigned int _id,
 }
 
 //////////////////////////////////////////////////
-LidarVisualPtr FilamentScene::CreateLidarVisualImpl(unsigned int,
-    const std::string &)
+LidarVisualPtr FilamentScene::CreateLidarVisualImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentLidarVisual>(new FilamentLidarVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
-FrustumVisualPtr FilamentScene::CreateFrustumVisualImpl(unsigned int,
-    const std::string &)
+FrustumVisualPtr FilamentScene::CreateFrustumVisualImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentFrustumVisual>(
+      new FilamentFrustumVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
@@ -480,31 +492,50 @@ RayQueryPtr FilamentScene::CreateRayQueryImpl(unsigned int _id,
 }
 
 //////////////////////////////////////////////////
-COMVisualPtr FilamentScene::CreateCOMVisualImpl(unsigned int,
-    const std::string &)
+COMVisualPtr FilamentScene::CreateCOMVisualImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentCOMVisual>(new FilamentCOMVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
-InertiaVisualPtr FilamentScene::CreateInertiaVisualImpl(unsigned int,
-    const std::string &)
+InertiaVisualPtr FilamentScene::CreateInertiaVisualImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentInertiaVisual>(
+      new FilamentInertiaVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
-JointVisualPtr FilamentScene::CreateJointVisualImpl(unsigned int,
-    const std::string &)
+JointVisualPtr FilamentScene::CreateJointVisualImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentJointVisual>(new FilamentJointVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
-LightVisualPtr FilamentScene::CreateLightVisualImpl(unsigned int,
-    const std::string &)
+LightVisualPtr FilamentScene::CreateLightVisualImpl(unsigned int _id,
+    const std::string &_name)
 {
-  return nullptr;
+  auto object = std::shared_ptr<FilamentLightVisual>(new FilamentLightVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
+}
+
+//////////////////////////////////////////////////
+GizmoVisualPtr FilamentScene::CreateGizmoVisualImpl(unsigned int _id,
+    const std::string &_name)
+{
+  auto object = std::shared_ptr<FilamentGizmoVisual>(
+      new FilamentGizmoVisual);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
