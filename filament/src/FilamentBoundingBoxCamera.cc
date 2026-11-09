@@ -347,9 +347,11 @@ void FilamentBoundingBoxCamera::Render()
 
   for (size_t i = 0; i < this->items.size(); ++i)
   {
+    // terrain occludes but never gets a box: ogre2's Terra is not an Item
     uint32_t label = kBackgroundLabel;
     Variant labelAny = this->items[i].visual->UserData("label");
-    if (const int *labelPtr = std::get_if<int>(&labelAny))
+    const int *labelPtr = std::get_if<int>(&labelAny);
+    if (labelPtr && !this->items[i].mesh->terrain)
       label = static_cast<uint32_t>(*labelPtr) & 0xffu;
     const uint32_t key = ((i % 256u) << 16) | ((i / 256u) << 8) | label;
     if (filament::MaterialInstance *mi = this->FlatInstance(key))

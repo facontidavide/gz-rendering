@@ -235,7 +235,7 @@ void FilamentHeightmap::Init()
     return;
   }
   // ogre2's thermal camera draws Terra flat white unless it is a heat source
-  this->mesh->thermalWhite = true;
+  this->mesh->terrain = true;
 
   // The factory gave the material-less submesh an owned unlit white
   // material; Terra is lit, white times the diffuse texture

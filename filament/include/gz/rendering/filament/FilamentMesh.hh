@@ -76,9 +76,10 @@ namespace gz
       /// \brief Register a submesh built by the mesh factory
       public: void AddSubMesh(FilamentSubMeshPtr _subMesh);
 
-      /// \brief Thermal draws it white unless it is a heat source, whatever
-      /// its material (how ogre2 draws Terra)
-      public: bool thermalWhite{false};
+      /// \brief Heightmap terrain, which ogre2 draws with Terra rather than
+      /// as an Item: thermal draws it white unless it is a heat source, and
+      /// the bounding box camera treats it as an unlabeled occluder.
+      public: bool terrain{false};
 
       protected: virtual SubMeshStorePtr SubMeshes() const override;
 
