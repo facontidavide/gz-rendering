@@ -330,15 +330,16 @@ def gate(name, mism, d):
 
 def rgb(ref_dir, test_dir):
     """Report only: lighting models differ by design."""
-    try:
-        from PIL import Image
-        a = np.asarray(Image.open(f"{ref_dir}/rgb.png"), float)[..., :3]
-        b = np.asarray(Image.open(f"{test_dir}/rgb.png"), float)[..., :3]
-    except (OSError, ImportError):
-        return
-    d = np.abs(a - b).max(-1)
-    print(f"rgb (not gated): mean|d| {d.mean():.2f}  p95 "
-          f"{np.percentile(d, 95):.0f}  p99 {np.percentile(d, 99):.0f}")
+    for name in ("rgb", "rgb_ortho"):
+        try:
+            from PIL import Image
+            a = np.asarray(Image.open(f"{ref_dir}/{name}.png"), float)[..., :3]
+            b = np.asarray(Image.open(f"{test_dir}/{name}.png"), float)[..., :3]
+        except (OSError, ImportError):
+            continue
+        d = np.abs(a - b).max(-1)
+        print(f"{name} (not gated): mean|d| {d.mean():.2f}  p95 "
+              f"{np.percentile(d, 95):.0f}  p99 {np.percentile(d, 99):.0f}")
 
 
 if __name__ == "__main__":

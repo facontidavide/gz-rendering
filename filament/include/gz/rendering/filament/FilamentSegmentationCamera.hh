@@ -52,6 +52,13 @@ namespace gz
 
       public: virtual ~FilamentSegmentationCamera();
 
+      // BaseCamera<FilamentCamera> would otherwise win over FilamentCamera
+      public: virtual void SetProjectionMatrix(const math::Matrix4d &_matrix)
+          override { FilamentCamera::SetProjectionMatrix(_matrix); }
+
+      public: virtual math::Matrix4d ProjectionMatrix() const override
+          { return FilamentCamera::ProjectionMatrix(); }
+
       public: virtual void CreateSegmentationTexture() override;
 
       public: virtual void Render() override;

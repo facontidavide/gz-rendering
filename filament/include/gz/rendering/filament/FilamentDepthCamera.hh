@@ -48,6 +48,10 @@ namespace gz
 
       public: virtual ~FilamentDepthCamera();
 
+      // BaseCamera<FilamentCamera> would otherwise win over FilamentCamera
+      public: virtual void SetProjectionMatrix(const math::Matrix4d &_matrix)
+          override { FilamentCamera::SetProjectionMatrix(_matrix); }
+
       public: virtual void CreateDepthTexture() override;
 
       public: virtual void Render() override;
@@ -55,6 +59,10 @@ namespace gz
       public: virtual void PostRender() override;
 
       public: virtual const float *DepthData() const override;
+
+      /// \brief Like ogre2: a custom matrix reports the configured clip
+      /// planes in its depth rows
+      public: virtual math::Matrix4d ProjectionMatrix() const override;
 
       public: virtual common::ConnectionPtr ConnectNewDepthFrame(
           std::function<void(const float *, unsigned int, unsigned int,

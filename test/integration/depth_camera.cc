@@ -748,7 +748,7 @@ TEST_F(DepthCameraTest, DepthCameraParticles)
 /////////////////////////////////////////////////
 TEST_F(DepthCameraTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(DepthCameraProjection))
 {
-  CHECK_SUPPORTED_ENGINE("ogre2");
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
 
   int imgWidth = 256;
   int imgHeight = 256;
@@ -875,7 +875,7 @@ TEST_F(DepthCameraTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(DepthCameraProjection))
 TEST_F(DepthCameraTest,
     GZ_UTILS_TEST_DISABLED_ON_WIN32(DepthCameraProjectionRoundTrip))
 {
-  CHECK_SUPPORTED_ENGINE("ogre2");
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
 
   const int imgWidth = 256;
   const int imgHeight = 256;
