@@ -133,8 +133,13 @@ void FilamentDepthCamera::Render()
           this->scene->CreateRenderTexture());
       this->colorTexture->SetFormat(PF_R8G8B8A8);
     }
-    this->colorTexture->SetWidth(this->ImageWidth());
-    this->colorTexture->SetHeight(this->ImageHeight());
+    // SetWidth/SetHeight mark the target dirty (rebuilt in PreRender)
+    if (this->colorTexture->Width() != this->ImageWidth() ||
+        this->colorTexture->Height() != this->ImageHeight())
+    {
+      this->colorTexture->SetWidth(this->ImageWidth());
+      this->colorTexture->SetHeight(this->ImageHeight());
+    }
     this->colorTexture->PreRender();
     this->colorTexture->SetClearColor(
         FilamentConversions::ToFloat4(this->scene->BackgroundColor()));
