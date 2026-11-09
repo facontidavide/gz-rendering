@@ -265,6 +265,33 @@ int main(int _argc, char **_argv)
       std::sort(t.begin(), t.end());
       return std::make_pair(t[t.size() / 2], t[t.size() * 9 / 10]);
     };
+    // phase split of the RGB frame: scene update (plugin CPU), render
+    // submission (engine CPU), readback (GPU + transfer)
+    {
+      std::vector<double> pre, ren, cpy;
+      for (int i = 0; i < frames + 10; ++i)
+      {
+        const auto a = Clock::now();
+        scene->PreRender();
+        const auto b = Clock::now();
+        camera->Render();
+        camera->PostRender();
+        scene->PostRender();
+        const auto c = Clock::now();
+        camera->Copy(image);
+        const auto d = Clock::now();
+        if (i < 10)
+          continue;
+        pre.push_back(std::chrono::duration<double, std::milli>(b - a).count());
+        ren.push_back(std::chrono::duration<double, std::milli>(c - b).count());
+        cpy.push_back(std::chrono::duration<double, std::milli>(d - c).count());
+      }
+      for (auto *v : {&pre, &ren, &cpy})
+        std::sort(v->begin(), v->end());
+      std::cout << "rgb phases (median ms): scene PreRender "
+                << pre[pre.size() / 2] << ", render " << ren[ren.size() / 2]
+                << ", readback " << cpy[cpy.size() / 2] << std::endl;
+    }
     const auto rgb = measure([&]{ camera->Capture(image); });
     const auto dep = measure([&]{ depth->Update(); });
     std::cout << "timing (" << frames << " frames, median/p90 ms): rgb 640x480 "
