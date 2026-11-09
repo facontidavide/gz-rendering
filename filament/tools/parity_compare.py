@@ -8,6 +8,7 @@ abs error stats where both are finite. Point clouds compare XYZ only.
 Wide-angle dumps (PARITY_WIDEANGLE=1) are compared geometrically instead:
 object centroid offsets, cutoff circle radius and Project3d, in pixels; the
 optional png gets the RGB images side by side (ref left, test right).
+Particle dumps (PARITY_PARTICLES=1) print their statistics side by side.
 """
 import os
 import sys
@@ -77,7 +78,23 @@ def wide_angle(ref_dir, test_dir, ref, tst, png):
         print(f"wrote {png}")
 
 
+def particles(ref_dir, test_dir):
+    rows = lambda d: {l.split()[0]: [float(x) for x in l.split()[1:]]
+                      for l in open(f"{d}/particles.txt")}
+    ref, tst = rows(ref_dir), rows(test_dir)
+    print(f"{'particles':<14}{'affected % ref/test':>22}"
+          f"{'mean ref/test':>18}{'std ref/test':>16}{'base ref/test':>16}")
+    for name, a in ref.items():
+        b = tst.get(name, [float("nan")] * 4)
+        print(f"{name:<14}{100 * a[0]:>11.2f}{100 * b[0]:>11.2f}"
+              f"{a[1]:>9.3f}{b[1]:>9.3f}{a[2]:>8.3f}{b[2]:>8.3f}"
+              f"{a[3]:>8.3f}{b[3]:>8.3f}")
+
+
 def main(ref_dir, test_dir, png=None):
+    if os.path.exists(f"{ref_dir}/particles.txt"):
+        particles(ref_dir, test_dir)
+        return
     ref, tst = load(ref_dir), load(test_dir)
     if os.path.exists(f"{ref_dir}/wa_geom.txt"):
         wide_angle(ref_dir, test_dir, ref, tst, png)

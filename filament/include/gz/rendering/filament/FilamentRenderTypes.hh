@@ -44,6 +44,7 @@ namespace gz
     class FilamentMeshFactory;
     class FilamentNode;
     class FilamentObject;
+    class FilamentParticleEmitter;
     class FilamentPointLight;
     class FilamentRenderEngine;
     class FilamentRenderTarget;
@@ -76,6 +77,7 @@ namespace gz
     typedef shared_ptr<FilamentLight>              FilamentLightPtr;
     typedef shared_ptr<FilamentMaterial>           FilamentMaterialPtr;
     typedef shared_ptr<FilamentMesh>               FilamentMeshPtr;
+    typedef shared_ptr<FilamentParticleEmitter>  FilamentParticleEmitterPtr;
     typedef shared_ptr<FilamentMeshFactory>        FilamentMeshFactoryPtr;
     typedef shared_ptr<FilamentNode>               FilamentNodePtr;
     typedef shared_ptr<FilamentObject>             FilamentObjectPtr;

@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <random>
 
 #include <backend/PixelBufferDescriptor.h>
 #include <filament/Camera.h>
@@ -29,6 +30,7 @@
 
 #include <gz/common/Console.hh>
 #include <gz/math/Helpers.hh>
+#include <gz/math/Rand.hh>
 
 #include "gz/rendering/Image.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
@@ -37,6 +39,7 @@
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
+#include "FilamentParticles.hh"
 
 using namespace gz;
 using namespace rendering;
@@ -148,8 +151,11 @@ void FilamentDepthCamera::Render()
     this->view->setShadowingEnabled(false);
   }
 
-  // Depth pass: every mesh drawn with the linear-depth material.
-  // Background reads as "beyond far".
+  // Depth pass: every mesh drawn with the linear-depth material, no
+  // particles (PostRender adds their effect). Background reads as "beyond
+  // far".
+  this->view->setVisibleLayers(0xff,
+      FilamentConversions::ToSensorLayers(this->VisibilityMask()));
   const float inf = std::numeric_limits<float>::infinity();
   this->renderTexture->SetClearColor({inf, inf, inf, 1.0f});
   const auto &meshes = this->scene->Meshes();
@@ -212,12 +218,54 @@ void FilamentDepthCamera::PostRender()
       (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.G()) * 255.0)) << 16u) |
       (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.B()) * 255.0)) << 8u) |
       255u;
+  // particles: half resolution depth of the nearest particle, like ogre2's
+  // particle pass, sampled nearest
+  namespace fp = filament_particles;
+  fp::Noise noise;
+  const unsigned int pw = std::max(width / 2u, 1u);
+  const unsigned int ph = std::max(height / 2u, 1u);
+  bool particles = fp::FindNoise(*this->scene, noise);
+  if (particles)
+  {
+    this->particleDepth.resize(static_cast<size_t>(pw) * ph);
+    const math::Pose3d world = this->WorldPose();
+    particles = fp::Raster(*this->scene, world.Pos(),
+        world.Rot().XAxis(), world.Rot().YAxis(), world.Rot().ZAxis(),
+        fx * pw / width, fx * ph / height, pw, ph,
+        nearClip * kNearScale, this->particleDepth.data());
+  }
+  // per frame seed, like ogre2's rnd uniform (gz::math::Rand stays seedable)
+  std::minstd_rand rng;
+  if (particles)
+  {
+    rng.seed(static_cast<unsigned int>(
+        math::Rand::IntUniform(1, std::numeric_limits<int>::max())));
+  }
+  std::uniform_real_distribution<double> uniform(0.0, 1.0);
+
   for (unsigned int v = 0; v < height; ++v)
   {
     for (unsigned int u = 0; u < width; ++u)
     {
       const size_t i = static_cast<size_t>(v) * width + u;
-      const double d = src[i];
+      double d = src[i];
+      bool particlePixel = false;
+      if (particles)
+      {
+        const float pd = this->particleDepth[
+            std::min(ph - 1u, (2u * v + 1u) * ph / (2u * height)) * pw +
+            std::min(pw - 1u, (2u * u + 1u) * pw / (2u * width))];
+        particlePixel = std::isfinite(pd);
+        if (particlePixel && pd < d)
+        {
+          // ranges along the pixel ray
+          const double a = (u + 0.5 - cx) / fx;
+          const double b = (v + 0.5 - cy) / fx;
+          const double rayLen = std::sqrt(1.0 + a * a + b * b);
+          d = fp::Scatter(uniform(rng), noise, pd * rayLen, d * rayLen) /
+              rayLen;
+        }
+      }
       // camera frame: X forward, Y left, Z up
       double p[3] = {d, -(u + 0.5 - cx) / fx * d, -(v + 0.5 - cy) / fx * d};
       bool clamped = false;
@@ -240,7 +288,9 @@ void FilamentDepthCamera::PostRender()
       out[0] = static_cast<float>(p[0]);
       out[1] = static_cast<float>(p[1]);
       out[2] = static_cast<float>(p[2]);
-      const uint32_t packed = (clamped || !rgba) ? bgPacked :
+      // ogre2 keeps the color of particle pixels
+      const uint32_t packed = ((clamped && !particlePixel) || !rgba) ?
+          bgPacked :
           (static_cast<uint32_t>(rgba[i * 4u]) << 24u) |
           (static_cast<uint32_t>(rgba[i * 4u + 1u]) << 16u) |
           (static_cast<uint32_t>(rgba[i * 4u + 2u]) << 8u) | 255u;

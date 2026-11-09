@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <random>
 
 #include <filament/Camera.h>
 #include <filament/Engine.h>
@@ -40,6 +41,7 @@
 #include <gz/common/Console.hh>
 #include <gz/math/Helpers.hh>
 #include <gz/math/Quaternion.hh>
+#include <gz/math/Rand.hh>
 #include <gz/math/Vector3.hh>
 
 #include "gz/rendering/Image.hh"
@@ -50,6 +52,7 @@
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
 #include "gz/rendering/filament/FilamentScene.hh"
 #include "FilamentCubeFaces.hh"
+#include "FilamentParticles.hh"
 
 using namespace gz;
 using namespace rendering;
@@ -380,7 +383,7 @@ void FilamentGpuRays::Render()
       this->NearClipPlane() / std::sqrt(3.0), this->FarClipPlane(),
       filament::Camera::Fov::HORIZONTAL);
   this->view->setVisibleLayers(0xff,
-      FilamentConversions::ToLayers(this->VisibilityMask()));
+      FilamentConversions::ToSensorLayers(this->VisibilityMask()));
 
   // SetWidth/SetHeight mark the target dirty (rebuilt in PreRender)
   const unsigned int atlasWidth = n * this->faceCount;
@@ -451,12 +454,59 @@ void FilamentGpuRays::PostRender()
   if (this->rays.size() != static_cast<size_t>(hCount) * vCount)
     return;
 
+  // particles: half resolution depth of the nearest particle per used cube
+  // face, like ogre2's particle pass, sampled at the ray's texel
+  namespace fp = filament_particles;
+  fp::Noise noise;
+  const unsigned int n = this->faceRes;
+  const unsigned int pn = n / 2u;
+  const size_t faceSize = static_cast<size_t>(pn) * pn;
+  bool particles = fp::FindNoise(*this->scene, noise);
+  std::minstd_rand rng;
+  if (particles)
+  {
+    // per frame seed, like ogre2's rnd uniform
+    rng.seed(static_cast<unsigned int>(
+        math::Rand::IntUniform(1, std::numeric_limits<int>::max())));
+    this->particleDepth.resize(6u * faceSize);
+    const math::Pose3d world = this->WorldPose();
+    particles = false;
+    for (int f = 0; f < 6; ++f)
+    {
+      if (!this->faceUsed[f])
+        continue;
+      const Face &fc = kFaces[f];
+      const float3 r = cross(fc.fwd, fc.up);
+      particles |= fp::Raster(*this->scene, world.Pos(),
+          world.Rot() * math::Vector3d(fc.fwd.x, fc.fwd.y, fc.fwd.z),
+          world.Rot() * math::Vector3d(-r.x, -r.y, -r.z),
+          world.Rot() * math::Vector3d(fc.up.x, fc.up.y, fc.up.z),
+          pn * 0.5, pn * 0.5, pn, pn, this->NearClipPlane() / std::sqrt(3.0),
+          this->particleDepth.data() + f * faceSize);
+    }
+  }
+  std::uniform_real_distribution<double> uniform(0.0, 1.0);
+  const unsigned int stride = n * this->faceCount;
+
   const float nearClip = static_cast<float>(this->NearClipPlane());
   const float farClip = static_cast<float>(this->FarClipPlane());
   for (size_t k = 0; k < this->rays.size(); ++k)
   {
     float range = k < this->ranges.size() ? this->ranges[k] :
         std::numeric_limits<float>::infinity();
+    if (particles)
+    {
+      const Ray &ray = this->rays[k];
+      const unsigned int px = ray.texel % stride % n;
+      const unsigned int py = ray.texel / stride;
+      const float pd = this->particleDepth[ray.face * faceSize +
+          (py / 2u) * pn + px / 2u];
+      if (pd < range / ray.invCos)
+      {
+        range = static_cast<float>(fp::Scatter(uniform(rng), noise,
+            pd * ray.invCos, range));
+      }
+    }
     if (!std::isfinite(range) || range > farClip)
       range = this->dataMaxVal;
     else if (range < nearClip)

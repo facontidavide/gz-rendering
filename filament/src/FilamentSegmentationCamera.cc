@@ -211,7 +211,7 @@ void FilamentSegmentationCamera::Render()
       {static_cast<float>(bg.R()), static_cast<float>(bg.G()),
        static_cast<float>(bg.B()), 1.0f});
   this->view->setVisibleLayers(0xff,
-      FilamentConversions::ToLayers(this->VisibilityMask()));
+      FilamentConversions::ToSensorLayers(this->VisibilityMask()));
 
   // Meshes with their visual, sorted like ogre2 sorts its items (name
   // "<visual>_<geometry>", descending): that order decides panoptic

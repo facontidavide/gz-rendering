@@ -551,8 +551,8 @@ TEST_F(ThermalCameraTest, ThermalCameraBoxes8Bit)
 //////////////////////////////////////////////////
 TEST_F(ThermalCameraTest, ThermalCameraParticles)
 {
-  // Only ogre2 supports 8 bit image format
-  CHECK_SUPPORTED_ENGINE("ogre2");
+  // 8 bit image format and particles: ogre2 and filament
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
 
   int imgWidth = 50;
   int imgHeight = 50;
