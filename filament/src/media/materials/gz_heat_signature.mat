@@ -2,6 +2,9 @@
 // to [minTemp, maxTemp] Kelvin and normalized like ogre2's
 // heat_signature_fs.glsl. Alpha 0.5 tells the thermal camera's readback
 // that red holds a normalized temperature (ids have alpha 1, colors 0).
+// All highp, no int math: GLES shaders default to mediump, which NVIDIA
+// honors, and its 1 << bitDepth overflowed for 16 bit outputs (every pixel
+// read minTemp). bitMax is 2^bitDepth - 1, passed as a float.
 material {
     name : gz_heat_signature,
     shadingModel : unlit,
@@ -9,22 +12,22 @@ material {
     depthWrite : true,
     requires : [ uv0 ],
     parameters : [
-        { type : float,     name : minTemp },
-        { type : float,     name : maxTemp },
-        { type : int,       name : bitDepth },
-        { type : float,     name : resolution },
-        { type : sampler2d, name : heatMap }
+        { type : float,     name : minTemp, precision : high },
+        { type : float,     name : maxTemp, precision : high },
+        { type : float,     name : bitMax, precision : high },
+        { type : float,     name : resolution, precision : high },
+        { type : sampler2d, name : heatMap, precision : high }
     ]
 }
 
 fragment {
     void material(inout MaterialInputs material) {
         prepareMaterial(material);
-        float heat = texture(materialParams_heatMap, getUV0()).x;
-        float mappedKelvin = ((materialParams.maxTemp -
+        highp float heat = texture(materialParams_heatMap, getUV0()).x;
+        highp float mappedKelvin = ((materialParams.maxTemp -
             materialParams.minTemp) * heat) + materialParams.minTemp;
-        float v = mappedKelvin / ((float(1 << materialParams.bitDepth) -
-            1.0) * materialParams.resolution);
+        highp float v = mappedKelvin /
+            (materialParams.bitMax * materialParams.resolution);
         material.baseColor = vec4(v, 0.0, 0.0, 0.5);
     }
 }

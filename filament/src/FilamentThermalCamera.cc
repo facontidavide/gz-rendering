@@ -259,7 +259,7 @@ filament::MaterialInstance *FilamentThermalCamera::HeatSignatureInstance(
   filament::MaterialInstance *mi = mat->createInstance();
   mi->setParameter("minTemp", minT);
   mi->setParameter("maxTemp", maxT);
-  mi->setParameter("bitDepth", bitDepth);
+  mi->setParameter("bitMax", static_cast<float>((1 << bitDepth) - 1));
   mi->setParameter("resolution", this->resolution);
   // ogre2's texture unit: bilinear, wrap, a single mip level
   mi->setParameter("heatMap", texIt->second, filament::TextureSampler(
