@@ -19,6 +19,8 @@
 #include <cstring>
 #include <limits>
 #include <random>
+#include <type_traits>
+#include <vector>
 
 #include <backend/PixelBufferDescriptor.h>
 #include <filament/Camera.h>
@@ -257,7 +259,72 @@ void FilamentDepthCamera::PostRender()
   }
   std::uniform_real_distribution<double> uniform(0.0, 1.0);
 
+  // ray slopes per column and row: -(u + 0.5 - cx) / fx * d below is
+  // colK[u] * d, the same double operations in the same order
+  std::vector<double> colK(width), rowK(height);
+  for (unsigned int u = 0; u < width; ++u)
+    colK[u] = -(u + 0.5 - cx) / fx;
   for (unsigned int v = 0; v < height; ++v)
+    rowK[v] = -(v + 0.5 - cy) / fy;
+
+  // Fast path without particles: the same clamping and packing as the loop
+  // below, with no per pixel divisions and nothing else in the loop.
+  auto convert = [&](auto _cloud)
+  {
+    constexpr bool cloud = decltype(_cloud)::value;
+    const double farT = farClip - tol;
+    const double nearT = nearClip + tol;
+    float *depthOut = this->depthImage.data();
+    float *cloudOut = this->pointCloud.data();
+    for (unsigned int v = 0; v < height; ++v)
+    {
+      const double kb = rowK[v];
+      const size_t row = static_cast<size_t>(v) * width;
+      for (unsigned int u = 0; u < width; ++u)
+      {
+        const size_t i = row + u;
+        const double d = src[i];
+        const double p1 = colK[u] * d;
+        const double p2 = kb * d;
+        float x = static_cast<float>(d);
+        float y = static_cast<float>(p1);
+        float z = static_cast<float>(p2);
+        bool clamped = false;
+        if (std::isinf(d) || std::sqrt(d * d + p1 * p1 + p2 * p2) > farT)
+        {
+          x = y = z = maxVal;
+          clamped = true;
+        }
+        else if (d < nearT)
+        {
+          x = y = z = minVal;
+          clamped = true;
+        }
+        depthOut[i] = x;
+        if constexpr (cloud)
+        {
+          float *out = cloudOut + i * 4u;
+          out[0] = x;
+          out[1] = y;
+          out[2] = z;
+          const uint32_t packed = (clamped || !rgba) ? bgPacked :
+              (static_cast<uint32_t>(rgba[i * 4u]) << 24u) |
+              (static_cast<uint32_t>(rgba[i * 4u + 1u]) << 16u) |
+              (static_cast<uint32_t>(rgba[i * 4u + 2u]) << 8u) | 255u;
+          std::memcpy(&out[3], &packed, sizeof(float));
+        }
+      }
+    }
+  };
+  if (!particles)
+  {
+    if (wantCloud)
+      convert(std::true_type{});
+    else
+      convert(std::false_type{});
+  }
+
+  for (unsigned int v = 0; particles && v < height; ++v)
   {
     for (unsigned int u = 0; u < width; ++u)
     {
