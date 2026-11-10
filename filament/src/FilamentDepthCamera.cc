@@ -16,6 +16,7 @@
  */
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <random>
@@ -83,6 +84,9 @@ void FilamentDepthCamera::Destroy()
   if (engine && this->depthInstance)
     engine->destroy(this->depthInstance);
   this->depthInstance = nullptr;
+  if (engine && this->clampInstance)
+    engine->destroy(this->clampInstance);
+  this->clampInstance = nullptr;
   if (this->colorTexture)
   {
     this->colorTexture->Destroy();
@@ -218,9 +222,59 @@ void FilamentDepthCamera::Render()
     this->renderTexture->SetClearColor({0.0f, 0.0f, 128.0f / 255.0f, 127.0f / 255.0f});
   else
     this->renderTexture->SetClearColor({inf, inf, inf, 1.0f});
+  // opt-in: clamp in the shader so PostRender only copies (depth only, no
+  // particles; float32 range test, so pixels right at the far range may
+  // differ from the CPU path's double test)
+  static const bool gpuDepthEnv = []
+  {
+    const char *e = std::getenv("GZ_FILAMENT_GPU_DEPTH");
+    return e && std::string(e) == "1";
+  }();
+  filament_particles::Noise noise;
+  this->gpuClamped = gpuDepthEnv &&
+      this->newRgbPointCloud.ConnectionCount() == 0u &&
+      !filament_particles::FindNoise(*this->scene, noise);
+  if (this->gpuClamped && !this->clampInstance)
+  {
+    filament::Material *mat = FilamentRenderEngine::Instance()->Material(
+        PackedDepth() ? "gz_depth_clamp_packed" : "gz_depth_clamp");
+    if (mat)
+      this->clampInstance = mat->createInstance();
+  }
+  this->gpuClamped = this->gpuClamped && this->clampInstance;
+  if (this->gpuClamped)
+  {
+    // the least float >= near + tol, as in PostRender
+    const double nearT = this->NearClipPlane() + 1e-6;
+    float nearFl = static_cast<float>(nearT);
+    if (static_cast<double>(nearFl) < nearT)
+      nearFl = std::nextafter(nearFl, inf);
+    this->clampInstance->setParameter("nearT", nearFl);
+    this->clampInstance->setParameter("farSq",
+        static_cast<float>(FarRangeSq(this->FarClipPlane() - 1e-6)));
+    this->clampInstance->setParameter("inf", inf);
+    // pinhole as in PostRender
+    const double w = this->ImageWidth();
+    const double h = this->ImageHeight();
+    double fx = (w * 0.5) / std::tan(this->HFOV().Radian() * 0.5);
+    double fy = fx;
+    double cx = w * 0.5;
+    double cy = h * 0.5;
+    if (this->customProjection)
+    {
+      const math::Matrix4d proj = FilamentCamera::ProjectionMatrix();
+      fx = proj(0, 0) * w * 0.5;
+      fy = proj(1, 1) * h * 0.5;
+      cx = w * 0.5 * (1.0 - proj(0, 2));
+      cy = h * 0.5 * (1.0 + proj(1, 2));
+    }
+    this->clampInstance->setParameter("ray", filament::math::float4(
+        w / fx, cx / fx, h / fy, cy / fy));
+  }
   const auto &meshes = this->scene->Meshes();
   for (FilamentMesh *m : meshes)
-    m->OverrideMaterial(this->depthInstance);
+    m->OverrideMaterial(this->gpuClamped ? this->clampInstance :
+        this->depthInstance);
   this->renderTexture->Render(this->view);
   FilamentRenderEngine::Instance()->EndFrame();
   for (FilamentMesh *m : meshes)
@@ -239,12 +293,14 @@ void FilamentDepthCamera::PostRender()
 
   // queue both readbacks, wait once (rows come back top row first, the
   // gz image layout)
-  const bool wantCloud = this->newRgbPointCloud.ConnectionCount() > 0u;
+  const bool wantCloud = !this->gpuClamped &&
+      this->newRgbPointCloud.ConnectionCount() > 0u;
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
   this->depthRaw.resize(len);
   const bool packedDepth = PackedDepth();
   renderer->readPixels(this->renderTexture->Native(), 0, 0, width, height,
-      filament::backend::PixelBufferDescriptor(this->depthRaw.data(),
+      filament::backend::PixelBufferDescriptor(this->gpuClamped ?
+      this->depthImage.data() : this->depthRaw.data(),
       len * sizeof(float),
       packedDepth ? filament::backend::PixelDataFormat::RGBA :
                     filament::backend::PixelDataFormat::R,
@@ -261,6 +317,14 @@ void FilamentDepthCamera::PostRender()
     rgba = this->colorRaw.data();
   }
   FilamentRenderEngine::Instance()->FilamentEngine()->flushAndWait();
+  if (this->gpuClamped)
+  {
+    FilamentGaussianNoisePass::ApplyDepth(*this, this->depthImage.data(),
+        nullptr);
+    this->newDepthFrame(this->depthImage.data(), width, height, 1u,
+        "FLOAT32");
+    return;
+  }
   const float *src = this->depthRaw.data();
   if (wantCloud)
     this->pointCloud.resize(len * 4u);

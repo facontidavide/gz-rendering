@@ -1650,6 +1650,10 @@ int main(int _argc, char **_argv)
           std::memcpy(depth.data(), _d, depth.size() * sizeof(float)); });
     auto t = Time([&] { cam->Update(); }, frames);
     timing << c.name << "_depth " << t.first << " " << t.second << "\n";
+    // PARITY_DEPTHONLY=1: also the depth of a frame without a point cloud
+    // subscriber (GZ_FILAMENT_GPU_DEPTH only clamps on the GPU then)
+    if (std::getenv("PARITY_DEPTHONLY"))
+      Write(dir, c.name + "_depthonly", depth.data(), c.w, c.h, 1, index);
     auto pc = cam->ConnectNewRgbPointCloud(
         [&](const float *_d, unsigned int, unsigned int, unsigned int,
             const std::string &) {

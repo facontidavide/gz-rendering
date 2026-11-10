@@ -80,6 +80,12 @@ namespace gz
 
       protected: filament::MaterialInstance *depthInstance{nullptr};
 
+      /// \brief gz_depth_clamp(_packed), GZ_FILAMENT_GPU_DEPTH=1 only
+      protected: filament::MaterialInstance *clampInstance{nullptr};
+
+      /// \brief This frame's depth target already holds the clamped depth
+      protected: bool gpuClamped{false};
+
       /// \brief Color pass target, created on demand for the point cloud
       protected: FilamentRenderTexturePtr colorTexture;
 

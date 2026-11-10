@@ -1,0 +1,36 @@
+// gz_depth_clamp for an RGBA8 target (Vulkan, see gz_depth_packed): the
+// clamped depth written as the 4 bytes of its float bits.
+material {
+    name : gz_depth_clamp_packed,
+    shadingModel : unlit,
+    blending : opaque,
+    depthWrite : true,
+    parameters : [
+        { type : float, name : nearT, precision : high },
+        { type : float, name : farSq, precision : high },
+        { type : float, name : inf, precision : high },
+        { type : float4, name : ray, precision : high }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec4 viewPos = getViewFromWorldMatrix() * vec4(getWorldPosition(), 1.0);
+        highp float d = -viewPos.z;
+        highp float inf = materialParams.inf;
+        // range along the pixel's ray, like the CPU path: ray holds
+        // (w / fx, cx / fx, h / fy, cy / fy), image rows top first
+        highp vec2 uv = getNormalizedViewportCoord().xy;
+        highp vec4 ray = materialParams.ray;
+        highp float p1 = (uv.x * ray.x - ray.y) * d;
+        highp float p2 = ((1.0 - uv.y) * ray.z - ray.w) * d;
+        if (d * d + p1 * p1 + p2 * p2 > materialParams.farSq)
+            d = inf;
+        else if (d < materialParams.nearT)
+            d = -inf;
+        // least significant byte in red: read back as little endian floats
+        highp uint bits = floatBitsToUint(d);
+        material.baseColor = vec4((uvec4(bits) >> uvec4(0u, 8u, 16u, 24u)) & 0xffu) / 255.0;
+    }
+}

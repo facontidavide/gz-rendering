@@ -1,0 +1,36 @@
+// gz_depth with ogre2's clamping done in the shader (GZ_FILAMENT_GPU_DEPTH=1,
+// depth only, see FilamentDepthCamera.cc): beyond far (euclidean range) is
+// +inf, nearer than near (forward distance) is -inf, so the readback is the
+// depth image as is. All highp: GLES defaults to mediump and NVIDIA honors it.
+material {
+    name : gz_depth_clamp,
+    shadingModel : unlit,
+    blending : opaque,
+    depthWrite : true,
+    parameters : [
+        { type : float, name : nearT, precision : high },
+        { type : float, name : farSq, precision : high },
+        { type : float, name : inf, precision : high },
+        { type : float4, name : ray, precision : high }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec4 viewPos = getViewFromWorldMatrix() * vec4(getWorldPosition(), 1.0);
+        highp float d = -viewPos.z;
+        highp float inf = materialParams.inf;
+        // range along the pixel's ray, like the CPU path: ray holds
+        // (w / fx, cx / fx, h / fy, cy / fy), image rows top first
+        highp vec2 uv = getNormalizedViewportCoord().xy;
+        highp vec4 ray = materialParams.ray;
+        highp float p1 = (uv.x * ray.x - ray.y) * d;
+        highp float p2 = ((1.0 - uv.y) * ray.z - ray.w) * d;
+        if (d * d + p1 * p1 + p2 * p2 > materialParams.farSq)
+            d = inf;
+        else if (d < materialParams.nearT)
+            d = -inf;
+        material.baseColor = vec4(d, 0.0, 0.0, 1.0);
+    }
+}
