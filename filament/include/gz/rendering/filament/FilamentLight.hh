@@ -76,6 +76,10 @@ namespace gz
 
       public: virtual void Destroy() override;
 
+      /// \brief Resize the shadow map of a directional light; ignored by
+      /// the other types. Called by FilamentScene::SetShadowTextureSize.
+      public: void SetShadowMapSize(unsigned int _size);
+
       protected: virtual void Init() override;
 
       /// \brief Push all parameters into the light component

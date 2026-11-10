@@ -867,8 +867,6 @@ static void TestLensFlare(gz::rendering::RenderEngine *_engine,
 TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(LensFlarePass))
 {
   CHECK_RENDERPASS_SUPPORTED();
-  // Lens flare is ogre2 only
-  CHECK_UNSUPPORTED_ENGINE("filament");
 
   TestLensFlare(this->engine, false);
 }
@@ -877,8 +875,6 @@ TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(LensFlarePass))
 TEST_F(RenderPassTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(LensFlareWideAnglePass))
 {
   CHECK_RENDERPASS_SUPPORTED();
-  // Lens flare is ogre2 only
-  CHECK_UNSUPPORTED_ENGINE("filament");
 
   TestLensFlare(this->engine, true);
 }

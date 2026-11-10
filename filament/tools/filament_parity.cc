@@ -34,6 +34,11 @@
 // front of the depth cameras, lidars and thermal cameras, see Particles()
 // PARITY_NOISE=1: only the Gaussian noise pass outputs (RGB, wide angle,
 // depth + point cloud, thermal), see Noise()
+// PARITY_LENSFLARE=1: only lens flare pictures (lf_*.png), see LensFlare()
+// PARITY_MARKERS=1: only what each sensor sees of a MT_POINTS marker, printed,
+// see Markers()
+// PARITY_PROJECTOR=<png>: only a projector of the picture over a floor seen
+// from above, written to projector.png, see ProjectTexture()
 // PARITY_PROJECTION=1: only custom (off-center intrinsics) and orthographic
 // projections on depth, bbox and RGB cameras, see Projection()
 // PARITY_ACTOR=1: adds two skinned walking actors (test/media/meshes/
@@ -75,6 +80,7 @@
 #include <gz/rendering/Light.hh>
 #include <gz/rendering/Mesh.hh>
 #include <gz/rendering/Image.hh>
+#include <gz/rendering/LensFlarePass.hh>
 #include <gz/rendering/GpuRays.hh>
 #include <gz/rendering/RenderEngine.hh>
 #include <gz/rendering/RenderPassSystem.hh>
@@ -82,7 +88,9 @@
 #include <gz/rendering/Scene.hh>
 #include <gz/rendering/SegmentationCamera.hh>
 #include <gz/rendering/ThermalCamera.hh>
+#include <gz/rendering/Marker.hh>
 #include <gz/rendering/Material.hh>
+#include <gz/rendering/Projector.hh>
 #include <gz/rendering/ParticleEmitter.hh>
 #include <gz/rendering/Visual.hh>
 #include <gz/rendering/WideAngleCamera.hh>
@@ -488,6 +496,267 @@ namespace
       }
       geom->DestroyVisual(v);
     }
+  }
+
+  /// \brief PARITY_LENSFLARE=1: lens_flare.png pictures for eyeballing, not
+  /// compared: lf_ref (no pass), lf_open (sun in view), lf_partial (the sun
+  /// half behind a box), lf_wide (wide-angle camera, after stitching)
+  void LensFlare(RenderEngine *_engine, const std::string &_dir)
+  {
+    ScenePtr scene = _engine->CreateScene("lensflare");
+    scene->SetAmbientLight(0.3, 0.3, 0.3);
+    scene->SetBackgroundColor(0.4, 0.55, 0.8);
+    VisualPtr root = scene->RootVisual();
+    DirectionalLightPtr sun = scene->CreateDirectionalLight();
+    sun->SetDirection(-1.0, -0.25, -0.25);
+    sun->SetDiffuseColor(0.8, 0.8, 0.8);
+    root->AddChild(sun);
+    MaterialPtr green = scene->CreateMaterial();
+    green->SetDiffuse(0.1, 0.6, 0.1);
+    VisualPtr ground = scene->CreateVisual();
+    ground->AddGeometry(scene->CreatePlane());
+    ground->SetLocalScale(40, 40, 1);
+    ground->SetMaterial(green);
+    root->AddChild(ground);
+    MaterialPtr red = scene->CreateMaterial();
+    red->SetDiffuse(0.7, 0.1, 0.1);
+    VisualPtr box = scene->CreateVisual();
+    box->AddGeometry(scene->CreateBox());
+    box->SetLocalPosition(4.0, 0.48, 2.0);
+    box->SetMaterial(red);
+    root->AddChild(box);
+
+    auto shot = [&](CameraPtr _cam, const std::string &_name)
+    {
+      Image img = _cam->CreateImage();
+      _cam->Capture(img);
+      common::Image png;
+      png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
+          common::Image::RGB_INT8);
+      png.SavePNG(_dir + "/" + _name + ".png");
+    };
+    auto pass = [&](bool _afterStitching)
+    {
+      LensFlarePassPtr p = std::dynamic_pointer_cast<LensFlarePass>(
+          _engine->RenderPassSystem()->Create<LensFlarePass>());
+      p->Init(scene);
+      p->SetLight(sun);
+      p->SetWideAngleCameraAfterStitching(_afterStitching);
+      return p;
+    };
+
+    CameraPtr cam = scene->CreateCamera();
+    cam->SetImageWidth(320);
+    cam->SetImageHeight(240);
+    cam->SetLocalPosition(0, 0, 1);
+    root->AddChild(cam);
+    box->SetVisible(false);
+    shot(cam, "lf_ref");
+    cam->AddRenderPass(pass(true));
+    shot(cam, "lf_open");
+    box->SetVisible(true);
+    shot(cam, "lf_partial");
+
+    CameraPtr wide = scene->CreateWideAngleCamera();
+    wide->SetImageWidth(320);
+    wide->SetImageHeight(240);
+    wide->SetLocalPosition(0, 0, 1);
+    root->AddChild(wide);
+    box->SetVisible(false);
+    wide->AddRenderPass(pass(true));
+    shot(wide, "lf_wide");
+    _engine->DestroyScene(scene);
+  }
+
+  /// \brief PARITY_MARKERS=1: three points of size 5 and one of size 1 at 3
+  /// m in front of every sensor, printing how many pixels each sees
+  void Markers(RenderEngine *_engine)
+  {
+    ScenePtr scene = _engine->CreateScene("markers");
+    scene->SetAmbientLight(0.3, 0.3, 0.3);
+    scene->SetBackgroundColor(0, 0, 0);
+    VisualPtr root = scene->RootVisual();
+    for (double size : {5.0, 1.0})
+    {
+      MarkerPtr marker = scene->CreateMarker();
+      marker->SetType(MT_POINTS);
+      marker->SetSize(size);
+      const double z = size > 1.0 ? 0.0 : 0.5;
+      for (double y : {-0.5, 0.0, 0.5})
+        marker->AddPoint(math::Vector3d(3.0, y, z), math::Color::Green);
+      VisualPtr v = scene->CreateVisual();
+      v->AddGeometry(marker);
+      v->SetUserData("label", 3);
+      v->SetUserData("temperature", 400.0f);
+      root->AddChild(v);
+    }
+    const math::Pose3d pose(0, 0, 0, 0, 0, 0);
+
+    DepthCameraPtr depth = scene->CreateDepthCamera("depth");
+    depth->SetLocalPose(pose);
+    depth->SetImageWidth(320);
+    depth->SetImageHeight(240);
+    depth->SetAspectRatio(320.0 / 240.0);
+    depth->SetHFOV(GZ_PI / 2);
+    depth->SetNearClipPlane(0.1);
+    depth->SetFarClipPlane(10);
+    depth->CreateDepthTexture();
+    root->AddChild(depth);
+    std::vector<float> d(320 * 240);
+    auto dc = depth->ConnectNewDepthFrame(
+        [&](const float *_d, unsigned int, unsigned int, unsigned int,
+            const std::string &) {
+          std::memcpy(d.data(), _d, d.size() * sizeof(float)); });
+    depth->Update();
+    size_t n = 0;
+    float lo = 1e9f, hi = 0;
+    for (float v : d)
+    {
+      if (std::isfinite(v))
+      {
+        ++n;
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+      }
+    }
+    std::cout << "markers depth: " << n << " finite pixels, range " << lo
+              << " .. " << hi << std::endl;
+    dc.reset();
+
+    CameraPtr rgb = scene->CreateCamera("rgb");
+    rgb->SetLocalPose(pose);
+    rgb->SetImageWidth(320);
+    rgb->SetImageHeight(240);
+    rgb->SetHFOV(GZ_PI / 2);
+    root->AddChild(rgb);
+    Image img = rgb->CreateImage();
+    rgb->Capture(img);
+    n = 0;
+    const unsigned char *px = img.Data<unsigned char>();
+    for (size_t i = 0; i < 320u * 240u; ++i)
+      n += (px[3 * i] || px[3 * i + 1] || px[3 * i + 2]) ? 1 : 0;
+    std::cout << "markers rgb: " << n << " lit pixels" << std::endl;
+
+    SegmentationCameraPtr seg = scene->CreateSegmentationCamera("seg");
+    seg->SetLocalPose(pose);
+    seg->SetImageWidth(320);
+    seg->SetImageHeight(240);
+    seg->SetAspectRatio(320.0 / 240.0);
+    seg->SetHFOV(GZ_PI / 2);
+    seg->SetBackgroundLabel(23);
+    root->AddChild(seg);
+    std::vector<uint8_t> labels(320 * 240 * 3);
+    auto sc = seg->ConnectNewSegmentationFrame(
+        [&](const uint8_t *_d, unsigned int, unsigned int, unsigned int,
+            const std::string &) {
+          std::memcpy(labels.data(), _d, labels.size()); });
+    seg->SetSegmentationType(SegmentationType::ST_SEMANTIC);
+    seg->EnableColoredMap(false);
+    seg->Update();
+    n = 0;
+    for (size_t i = 0; i < 320u * 240u; ++i)
+      n += (labels[3 * i] | (labels[3 * i + 1] << 8)) == 3 ? 1 : 0;
+    std::cout << "markers segmentation: " << n << " label-3 pixels";
+    std::map<unsigned int, unsigned int> values;
+    for (size_t i = 0; i < 320u * 240u; ++i)
+      ++values[labels[3 * i] | (labels[3 * i + 1] << 8)];
+    for (const auto &v : values)
+      std::cout << ", label " << v.first << ": " << v.second << " px";
+    std::cout << std::endl;
+    sc.reset();
+
+    ThermalCameraPtr th = scene->CreateThermalCamera("thermal");
+    th->SetLocalPose(pose);
+    th->SetImageWidth(320);
+    th->SetImageHeight(240);
+    th->SetAspectRatio(320.0 / 240.0);
+    th->SetHFOV(GZ_PI / 2);
+    th->SetNearClipPlane(0.5);
+    th->SetFarClipPlane(10);
+    th->SetImageFormat(PF_L16);
+    th->SetAmbientTemperature(296.0f);
+    th->SetAmbientTemperatureRange(0.0f);
+    th->SetHeatSourceTemperatureRange(2.0f);
+    th->SetLinearResolution(0.01f);
+    th->SetMinTemperature(250.0f);
+    th->SetMaxTemperature(450.0f);
+    root->AddChild(th);
+    std::vector<uint16_t> t(320 * 240);
+    auto tc = th->ConnectNewThermalFrame(
+        [&](const uint16_t *_d, unsigned int, unsigned int, unsigned int,
+            const std::string &) {
+          std::memcpy(t.data(), _d, t.size() * 2); });
+    th->Update();
+    n = 0;
+    uint16_t base = t[0];
+    for (uint16_t v : t)
+      n += v > base + 100 ? 1 : 0;
+    std::cout << "markers thermal: " << n << " hot pixels (ambient " << base
+              << ")" << std::endl;
+    tc.reset();
+
+    BoundingBoxCameraPtr bb = scene->CreateBoundingBoxCamera("bbox");
+    bb->SetLocalPose(pose);
+    bb->SetImageWidth(320);
+    bb->SetImageHeight(240);
+    bb->SetAspectRatio(320.0 / 240.0);
+    bb->SetHFOV(GZ_PI / 2);
+    bb->SetBoundingBoxType(BoundingBoxType::BBT_VISIBLEBOX2D);
+    root->AddChild(bb);
+    std::vector<BoundingBox> boxes;
+    auto bc = bb->ConnectNewBoundingBoxes(
+        [&](const std::vector<BoundingBox> &_b) { boxes = _b; });
+    bb->Update();
+    std::cout << "markers bbox: " << boxes.size() << " boxes" << std::endl;
+    bc.reset();
+    // sensors stay alive: ogre2 asserts in DestroySensor on depth cameras
+  }
+
+  /// \brief PARITY_PROJECTOR=<png>: projector.png, the picture projected onto
+  /// a floor, seen by a camera above with the same orientation
+  void ProjectTexture(RenderEngine *_engine, const std::string &_png,
+      const std::string &_dir)
+  {
+    ScenePtr scene = _engine->CreateScene("projector");
+    scene->SetBackgroundColor(0, 0, 0);
+    scene->SetAmbientLight(1, 1, 1);
+    VisualPtr root = scene->RootVisual();
+    DirectionalLightPtr light = scene->CreateDirectionalLight();
+    light->SetDirection(0, 0, -1);
+    root->AddChild(light);
+    MaterialPtr gray = scene->CreateMaterial();
+    gray->SetDiffuse(0.5, 0.5, 0.5);
+    gray->SetAmbient(0.5, 0.5, 0.5);
+    VisualPtr floor = scene->CreateVisual();
+    floor->AddGeometry(scene->CreateBox());
+    floor->SetLocalScale(20, 20, 1);
+    floor->SetLocalPosition(0, 0, -0.5);
+    floor->SetMaterial(gray);
+    root->AddChild(floor);
+
+    ProjectorPtr projector = scene->CreateProjector();
+    projector->SetNearClipPlane(0.5);
+    projector->SetFarClipPlane(4.0);
+    projector->SetHFOV(0.8);
+    projector->SetTexture(_png);
+    projector->SetWorldPosition(0, 0, 3);
+    projector->SetWorldRotation(0, GZ_PI / 2.0, 0);
+    root->AddChild(projector);
+
+    CameraPtr cam = scene->CreateCamera();
+    cam->SetImageWidth(256);
+    cam->SetImageHeight(256);
+    cam->SetWorldPosition(0, 0, 6);
+    cam->SetWorldRotation(0, GZ_PI / 2.0, 0);
+    root->AddChild(cam);
+    Image img = cam->CreateImage();
+    cam->Capture(img);
+    cam->Capture(img);
+    common::Image png;
+    png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
+        common::Image::RGB_INT8);
+    png.SavePNG(_dir + "/projector.png");
+    _engine->DestroyScene(scene);
   }
 
   /// \brief PARITY_NOISE=1: Gaussian noise render pass outputs, compared as
@@ -1252,6 +1521,26 @@ int main(int _argc, char **_argv)
   if (std::getenv("PARITY_PROJECTION"))
   {
     Projection(scene, dir, index);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
+
+  if (std::getenv("PARITY_LENSFLARE"))
+  {
+    LensFlare(engine, dir);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
+
+  if (std::getenv("PARITY_MARKERS"))
+  {
+    Markers(engine);
+    return 0;
+  }
+
+  if (const char *png = std::getenv("PARITY_PROJECTOR"))
+  {
+    ProjectTexture(engine, png, dir);
     std::cout << "wrote " << dir << std::endl;
     return 0;
   }

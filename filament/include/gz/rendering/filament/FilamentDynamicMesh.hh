@@ -83,7 +83,20 @@ namespace gz
 
       public: virtual void SetLayers(uint8_t _layers) override;
 
+      /// \brief Sensors draw points as 1 pixel dots (POINTS primitive) with
+      /// their material, like ogre2: the squares of gz_marker_points.mat
+      /// only exist in the pass of the point material itself
+      public: virtual void OverrideMaterial(
+          filament::MaterialInstance *_instance) override;
+
+      public: virtual void OverrideMaterial(unsigned int _index,
+          filament::MaterialInstance *_instance) override;
+
       public: virtual void RestoreMaterials() override;
+
+      /// \brief Draw the points as dots (true, what OverrideMaterial does) or
+      /// as their squares, which under a sensor's material collapse to nothing
+      public: void UseDots(bool _dots);
 
       /// \brief Let the owner (marker, wire box...) parent this mesh
       public: void SetOwnerParent(FilamentVisualPtr _parent);
@@ -127,6 +140,7 @@ namespace gz
 
       private: void Release();
 
+
       private: std::vector<math::Vector3d> vertices;
 
       private: std::vector<math::Color> colors;
@@ -142,6 +156,12 @@ namespace gz
       private: filament::VertexBuffer *vb{nullptr};
 
       private: filament::IndexBuffer *ib{nullptr};
+
+      /// \brief One index per point, the POINTS primitive of UseDots
+      private: filament::IndexBuffer *dotIb{nullptr};
+
+      /// \brief Index count of ib
+      private: size_t indexCount{0};
 
       private: filament::MaterialInstance *pointInstance{nullptr};
 

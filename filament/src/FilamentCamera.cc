@@ -26,6 +26,7 @@
 
 #include <gz/common/Console.hh>
 #include <gz/math/Helpers.hh>
+#include <gz/math/Matrix4.hh>
 
 #include "gz/rendering/filament/FilamentCamera.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
@@ -301,5 +302,19 @@ void FilamentCamera::Render()
   this->view->setVisibleLayers(0xff,
       FilamentConversions::MaskToLayers(this->VisibilityMask()));
   this->renderTexture->Render(this->view);
+  if (!this->scene->Projectors().empty())
+  {
+    // projected textures go on the scene, before the render passes
+    const math::Matrix4d inverse =
+        (this->ProjectionMatrix() * this->ViewMatrix()).Inverse();
+    filament::math::mat4f invViewProj;
+    for (int c = 0; c < 4; ++c)
+    {
+      for (int r = 0; r < 4; ++r)
+        invViewProj[c][r] = static_cast<float>(inverse(r, c));
+    }
+    this->renderTexture->ApplyProjectors(this->scene->Projectors(),
+        invViewProj, this->VisibilityMask());
+  }
   this->renderTexture->ApplyRenderPasses(this->renderTexture->RenderPasses());
 }

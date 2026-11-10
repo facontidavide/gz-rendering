@@ -755,7 +755,7 @@ TEST_F(SceneTest, Sky)
 /////////////////////////////////////////////////
 TEST_F(SceneTest, ShadowTextureSize)
 {
-  CHECK_SUPPORTED_ENGINE("ogre2");
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
 
   auto scene = engine->CreateScene("scene");
   ASSERT_NE(nullptr, scene);

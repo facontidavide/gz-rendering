@@ -38,8 +38,9 @@ namespace gz
   {
     inline namespace GZ_RENDERING_VERSION_NAMESPACE {
     //
-    /// \brief A gz material is one instance each of the gz_lit and gz_unlit
-    /// filament materials; parameters are pushed in PreRender.
+    /// \brief A gz material is one instance each of the gz_lit, gz_unlit and
+    /// gz_unlit_transparent filament materials; parameters are pushed in
+    /// PreRender.
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentMaterial :
       public BaseMaterial<FilamentObject>
     {
@@ -182,7 +183,10 @@ namespace gz
       // documentation inherited
       public: virtual enum MaterialType Type() const override;
 
-      /// \brief Active material instance (lit or unlit)
+      /// \brief Alpha of the drawn color: (1 - transparency) * diffuse alpha
+      public: double Opacity() const;
+
+      /// \brief Active material instance (lit, unlit or transparent unlit)
       public: filament::MaterialInstance *Instance() const;
 
       /// \brief Diffuse texture on the GPU, nullptr if none
@@ -199,6 +203,10 @@ namespace gz
       protected: filament::MaterialInstance *lit{nullptr};
 
       protected: filament::MaterialInstance *unlit{nullptr};
+
+      /// \brief gz_unlit with alpha blending, used instead of unlit while
+      /// Transparency() > 0
+      protected: filament::MaterialInstance *unlitTransparent{nullptr};
 
       protected: filament::Texture *texture{nullptr};
 

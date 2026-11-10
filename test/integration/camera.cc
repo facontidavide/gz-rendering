@@ -24,6 +24,7 @@
 
 #include "gz/rendering/Camera.hh"
 #include "gz/rendering/GpuRays.hh"
+#include "gz/rendering/Marker.hh"
 #include "gz/rendering/PixelBuffer.hh"
 #include "gz/rendering/Scene.hh"
 #include "gz/rendering/SegmentationCamera.hh"
@@ -903,5 +904,61 @@ TEST_F(CameraTest, GZ_UTILS_TEST_DISABLED_ON_WIN32(CopyIntoExternalBuffer))
       width * height));
 
   // Clean up
+  engine->DestroyScene(scene);
+}
+
+/////////////////////////////////////////////////
+TEST_F(CameraTest, TransparentMarker)
+{
+  // unlit materials blend with transparency > 0
+  CHECK_SUPPORTED_ENGINE("ogre2", "filament");
+
+  ScenePtr scene = engine->CreateScene("scene");
+  ASSERT_NE(nullptr, scene);
+  scene->SetBackgroundColor(0.0, 0.0, 1.0);
+  scene->SetAmbientLight(1.0, 1.0, 1.0);
+  VisualPtr root = scene->RootVisual();
+
+  CameraPtr camera = scene->CreateCamera();
+  camera->SetImageWidth(32);
+  camera->SetImageHeight(32);
+  root->AddChild(camera);
+
+  // red triangles covering the view, one opaque and one half transparent
+  // (markers copy their material when it is assigned)
+  VisualPtr visuals[2];
+  for (int i = 0; i < 2; ++i)
+  {
+    MaterialPtr red = scene->CreateMaterial();
+    red->SetDiffuse(1.0, 0.0, 0.0);
+    red->SetLightingEnabled(false);
+    red->SetTransparency(i == 0 ? 0.0 : 0.5);
+    MarkerPtr marker = scene->CreateMarker();
+    marker->SetType(MT_TRIANGLE_LIST);
+    marker->AddPoint(3.0, 10.0, -10.0, math::Color::Red);
+    marker->AddPoint(3.0, -10.0, -10.0, math::Color::Red);
+    marker->AddPoint(3.0, 0.0, 10.0, math::Color::Red);
+    marker->SetMaterial(red);
+    visuals[i] = scene->CreateVisual();
+    visuals[i]->AddGeometry(marker);
+    root->AddChild(visuals[i]);
+  }
+
+  Image image = camera->CreateImage();
+  const unsigned int center = (16 * 32 + 16) * 3;
+
+  // opaque: no blue left
+  visuals[1]->SetVisible(false);
+  camera->Capture(image);
+  EXPECT_GT(image.Data<unsigned char>()[center], 100);
+  EXPECT_LT(image.Data<unsigned char>()[center + 2], 20);
+
+  // half transparent: the blue background shows through
+  visuals[0]->SetVisible(false);
+  visuals[1]->SetVisible(true);
+  camera->Capture(image);
+  EXPECT_GT(image.Data<unsigned char>()[center], 50);
+  EXPECT_GT(image.Data<unsigned char>()[center + 2], 50);
+
   engine->DestroyScene(scene);
 }

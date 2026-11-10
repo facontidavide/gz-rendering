@@ -38,6 +38,7 @@
 
 #include "gz/rendering/Image.hh"
 #include "gz/rendering/PixelFormat.hh"
+#include "gz/rendering/LensFlarePass.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
@@ -302,8 +303,10 @@ void FilamentWideAngleCamera::Render()
   std::vector<RenderPassPtr> facePasses, finalPasses;
   for (const RenderPassPtr &pass : this->renderTexture->RenderPasses())
   {
-    (pass->WideAngleCameraAfterStitching() ? finalPasses : facePasses)
-        .push_back(pass);
+    // ponytail: the lens flare always goes on the stitched image
+    const bool final = pass->WideAngleCameraAfterStitching() ||
+        std::dynamic_pointer_cast<LensFlarePass>(pass);
+    (final ? finalPasses : facePasses).push_back(pass);
   }
   this->atlas->ApplyRenderPasses(facePasses);
 

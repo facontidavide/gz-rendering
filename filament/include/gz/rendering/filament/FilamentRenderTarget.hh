@@ -17,8 +17,11 @@
 #ifndef GZ_RENDERING_FILAMENT_FILAMENTRENDERTARGET_HH_
 #define GZ_RENDERING_FILAMENT_FILAMENTRENDERTARGET_HH_
 
+#include <map>
+#include <set>
 #include <vector>
 
+#include <math/mat4.h>
 #include <math/vec4.h>
 
 #include "gz/rendering/config.hh"
@@ -41,6 +44,8 @@ namespace gz
   {
     inline namespace GZ_RENDERING_VERSION_NAMESPACE {
     //
+    class FilamentProjector;
+
     /// \brief Offscreen color+depth attachment pair. Rendering goes through
     /// Renderer::renderStandaloneView (Renderer::render inside
     /// FilamentRenderEngine::BeginFrame/EndFrame), readback through
@@ -78,6 +83,16 @@ namespace gz
       /// ColorTexture() name the attachments holding the result.
       public: void ApplyRenderPasses(const std::vector<RenderPassPtr> &_passes);
 
+      /// \brief Blend the projectors' textures over the color attachment,
+      /// for the projectors visible to _visibilityMask. Call right after
+      /// rendering the scene: the scene depth is still in the depth
+      /// attachment.
+      /// \param[in] _invViewProj Camera clip space to world
+      public: void ApplyProjectors(
+          const std::set<FilamentProjector *> &_projectors,
+          const filament::math::mat4f &_invViewProj,
+          uint32_t _visibilityMask);
+
       /// \brief Passes added with AddRenderPass
       public: const std::vector<RenderPassPtr> &RenderPasses() const;
 
@@ -107,6 +122,12 @@ namespace gz
       private: filament::Texture *scratchColor{nullptr};
 
       private: filament::Texture *scratchDepth{nullptr};
+
+      /// \brief Targets with just a color attachment, for drawing over what
+      /// the scene rendered while sampling its depth (ApplyProjectors); by
+      /// color texture
+      private: std::map<filament::Texture *, filament::RenderTarget *>
+          colorTargets;
 
       protected: filament::math::float4 clearColor{0.0f, 0.0f, 0.0f, 1.0f};
 

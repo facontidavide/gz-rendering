@@ -40,6 +40,7 @@ namespace gz
     inline namespace GZ_RENDERING_VERSION_NAMESPACE {
     //
     class FilamentDynamicMesh;
+    class FilamentProjector;
 
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentScene :
       public BaseScene
@@ -71,6 +72,14 @@ namespace gz
       // Documentation inherited.
       public: virtual bool SkyEnabled() const override;
 
+      // Documentation inherited. Only directional lights, like ogre2.
+      public: virtual bool SetShadowTextureSize(LightType _lightType,
+          unsigned int _textureSize) override;
+
+      // Documentation inherited.
+      public: virtual unsigned int ShadowTextureSize(
+          LightType _lightType) const override;
+
       /// \brief Native filament scene
       public: filament::Scene *Native() const;
 
@@ -97,6 +106,16 @@ namespace gz
       /// \brief Remove an emitter from ParticleEmitters()
       public: void UnregisterParticleEmitter(
           FilamentParticleEmitter *_emitter);
+
+      /// \brief Projectors of this scene
+      public: const std::set<FilamentProjector *> &Projectors() const;
+
+      public: void RegisterProjector(FilamentProjector *_projector);
+
+      public: void UnregisterProjector(FilamentProjector *_projector);
+
+      protected: virtual ProjectorPtr CreateProjectorImpl(unsigned int _id,
+                     const std::string &_name) override;
 
       protected: virtual DirectionalLightPtr CreateDirectionalLightImpl(
                      unsigned int _id, const std::string &_name) override;
@@ -242,6 +261,9 @@ namespace gz
 
       protected: math::Color ambient;
 
+      /// \brief Shadow map size of the directional lights
+      protected: unsigned int dirTexSize{2048u};
+
       protected: FilamentVisualPtr rootVisual;
 
       protected: FilamentMeshFactoryPtr meshFactory;
@@ -257,6 +279,8 @@ namespace gz
       protected: std::set<FilamentMesh *> meshes;
 
       protected: std::vector<FilamentParticleEmitter *> particleEmitters;
+
+      protected: std::set<FilamentProjector *> projectors;
 
       private: friend class FilamentRenderEngine;
       private: friend class FilamentMesh;
