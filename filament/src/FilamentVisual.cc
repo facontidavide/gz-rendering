@@ -119,7 +119,9 @@ bool FilamentVisual::AttachGeometry(GeometryPtr _geometry)
       ->getTransformManager();
   tm.setParent(tm.getInstance(derived->Entity()),
                tm.getInstance(this->entity));
-  this->scene->Native()->addEntity(derived->Entity());
+  // like ogre2: drawn only once the visual is in the scene graph
+  if (this->InSceneGraph())
+    this->scene->Native()->addEntity(derived->Entity());
   derived->SetLayers(this->visible ?
       FilamentConversions::ToLayers(this->VisibilityFlags()) : 0u);
   return true;
@@ -145,6 +147,68 @@ bool FilamentVisual::DetachGeometry(GeometryPtr _geometry)
   }
   derived->SetParent(nullptr);
   return true;
+}
+
+//////////////////////////////////////////////////
+bool FilamentVisual::AttachChild(NodePtr _child)
+{
+  if (!FilamentNode::AttachChild(_child))
+    return false;
+  auto child = std::dynamic_pointer_cast<FilamentVisual>(_child);
+  if (child)
+    child->SetInScene(this->InSceneGraph());
+  return true;
+}
+
+//////////////////////////////////////////////////
+bool FilamentVisual::DetachChild(NodePtr _child)
+{
+  if (!FilamentNode::DetachChild(_child))
+    return false;
+  auto child = std::dynamic_pointer_cast<FilamentVisual>(_child);
+  if (child)
+    child->SetInScene(false);
+  return true;
+}
+
+//////////////////////////////////////////////////
+bool FilamentVisual::InSceneGraph() const
+{
+  if (!this->scene)
+    return false;
+  const VisualPtr root = this->scene->RootVisual();
+  const Node *rootNode = root.get();
+  for (const Node *n = this; n; n = n->Parent().get())
+  {
+    if (n == rootNode)
+      return true;
+  }
+  return false;
+}
+
+//////////////////////////////////////////////////
+void FilamentVisual::SetInScene(bool _inScene)
+{
+  filament::Scene *native = this->scene ? this->scene->Native() : nullptr;
+  if (!native)
+    return;
+  for (auto it = this->geometries->Begin(); it != this->geometries->End(); ++it)
+  {
+    const ::utils::Entity e = (*it)->Entity();
+    if (e.isNull())
+      continue;
+    if (_inScene)
+      native->addEntity(e);
+    else
+      native->remove(e);
+  }
+  for (unsigned int i = 0; i < this->ChildCount(); ++i)
+  {
+    auto child = std::dynamic_pointer_cast<FilamentVisual>(
+        this->ChildByIndex(i));
+    if (child)
+      child->SetInScene(_inScene);
+  }
 }
 
 //////////////////////////////////////////////////
