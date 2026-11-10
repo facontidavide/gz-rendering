@@ -1,0 +1,19 @@
+// gz_depth for an RGBA8 target (used on Vulkan, see PackedDepth in
+// FilamentDepthCamera.cc): same depth, written as the 4 bytes of its float
+// bits so the readback is a plain copy that gives back the exact float.
+material {
+    name : gz_depth_packed,
+    shadingModel : unlit,
+    blending : opaque,
+    depthWrite : true
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec4 viewPos = getViewFromWorldMatrix() * vec4(getWorldPosition(), 1.0);
+        // least significant byte in red: read back as little endian floats
+        highp uint bits = floatBitsToUint(-viewPos.z);
+        material.baseColor = vec4((uvec4(bits) >> uvec4(0u, 8u, 16u, 24u)) & 0xffu) / 255.0;
+    }
+}
