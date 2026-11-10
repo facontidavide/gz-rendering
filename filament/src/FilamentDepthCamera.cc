@@ -141,6 +141,27 @@ namespace
   /// enables for shadow passes).
   constexpr double kNearScale = 0.1;
   constexpr double kFarScale = 1.1;
+
+  /// \brief The largest r2 with sqrt(r2) <= _far, so that
+  /// sqrt(r2) > _far exactly when r2 > FarRangeSq(_far). sqrt is correctly
+  /// rounded and monotonic, so this threshold gives the same decision as
+  /// the square root, bit for bit, without one per pixel.
+  double FarRangeSq(double _far)
+  {
+    const double maxD = std::numeric_limits<double>::max();
+    // NaN: never beyond; negative: every non-NaN r2 is beyond
+    if (std::isnan(_far) || _far < 0.0)
+      return _far < 0.0 ? -1.0 : _far;
+    double s = _far * _far;
+    // overflow: only r2 = inf has a root beyond a finite _far
+    if (std::isinf(s))
+      return std::isinf(_far) ? s : maxD;
+    while (s > 0.0 && std::sqrt(s) > _far)
+      s = std::nextafter(s, 0.0);
+    while (s < maxD && std::sqrt(std::nextafter(s, maxD)) <= _far)
+      s = std::nextafter(s, maxD);
+    return s;
+  }
 }
 
 //////////////////////////////////////////////////
@@ -305,12 +326,15 @@ void FilamentDepthCamera::PostRender()
   for (unsigned int v = 0; v < height; ++v)
     rowK[v] = -(v + 0.5 - cy) / fy;
 
+  // sqrt(r2) > farClip - tol, without the square root
+  const double farSq = FarRangeSq(farClip - tol);
+
   // Fast path without particles: the same clamping and packing as the loop
-  // below, with no per pixel divisions and nothing else in the loop.
+  // below, with no per pixel divisions or square roots and no branches, so
+  // the compiler can vectorise it.
   auto convert = [&](auto _cloud)
   {
     constexpr bool cloud = decltype(_cloud)::value;
-    const double farT = farClip - tol;
     const double nearT = nearClip + tol;
     float *depthOut = this->depthImage.data();
     float *cloudOut = this->pointCloud.data();
@@ -324,27 +348,21 @@ void FilamentDepthCamera::PostRender()
         const double d = src[i];
         const double p1 = colK[u] * d;
         const double p2 = kb * d;
-        float x = static_cast<float>(d);
-        float y = static_cast<float>(p1);
-        float z = static_cast<float>(p2);
-        bool clamped = false;
-        if (std::isinf(d) || std::sqrt(d * d + p1 * p1 + p2 * p2) > farT)
-        {
-          x = y = z = maxVal;
-          clamped = true;
-        }
-        else if (d < nearT)
-        {
-          x = y = z = minVal;
-          clamped = true;
-        }
-        depthOut[i] = x;
+        // converted unconditionally (exact, or unused when clamped) so the
+        // selects below need no branches
+        const float x = static_cast<float>(d);
+        const bool far = std::isinf(d) | (d * d + p1 * p1 + p2 * p2 > farSq);
+        const bool clamped = far | (d < nearT);
+        const float c = far ? maxVal : minVal;
+        depthOut[i] = clamped ? c : x;
         if constexpr (cloud)
         {
+          const float y = static_cast<float>(p1);
+          const float z = static_cast<float>(p2);
           float *out = cloudOut + i * 4u;
-          out[0] = x;
-          out[1] = y;
-          out[2] = z;
+          out[0] = clamped ? c : x;
+          out[1] = clamped ? c : y;
+          out[2] = clamped ? c : z;
           const uint32_t packed = (clamped || !rgba) ? bgPacked :
               (static_cast<uint32_t>(rgba[i * 4u]) << 24u) |
               (static_cast<uint32_t>(rgba[i * 4u + 1u]) << 16u) |
@@ -388,8 +406,7 @@ void FilamentDepthCamera::PostRender()
       // camera frame: X forward, Y left, Z up
       double p[3] = {d, -(u + 0.5 - cx) / fx * d, -(v + 0.5 - cy) / fy * d};
       bool clamped = false;
-      if (std::isinf(d) ||
-          std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) > farClip - tol)
+      if (std::isinf(d) || p[0] * p[0] + p[1] * p[1] + p[2] * p[2] > farSq)
       {
         p[0] = p[1] = p[2] = maxVal;
         clamped = true;
