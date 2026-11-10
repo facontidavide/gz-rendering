@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -504,6 +505,13 @@ bool FilamentRenderEngine::InitImpl()
   filament::Engine::Backend backend = filament::Engine::Backend::OPENGL;
   if (this->dataPtr->backend == "vulkan")
     backend = filament::Engine::Backend::VULKAN;
+
+  // Every sensor readback ends in flushAndWait(), i.e. glFinish() on the
+  // driver thread, which NVIDIA's GL driver spins on (sched_yield) by default.
+  // usleep between polls instead: the GPU work takes a few 100 us, the CPU
+  // goes to physics meanwhile. Must be set before the driver loads; a value
+  // the user set wins.
+  setenv("__GL_YIELD", "USLEEP", 0);
 
   this->dataPtr->engine = filament::Engine::Builder()
       .backend(backend)

@@ -125,6 +125,11 @@ void FilamentRenderTarget::BuildAttachments(filament::RenderTarget *&_target,
     case PF_FLOAT32_RGBA:
       colorFormat = filament::Texture::InternalFormat::RGBA32F;
       break;
+    case PF_L8:
+      // like ogre2, which renders grey scale natively into R8 unorm: the
+      // linear red channel, no sRGB encoding
+      colorFormat = filament::Texture::InternalFormat::R8;
+      break;
     default:
       colorFormat = this->srgb ? filament::Texture::InternalFormat::SRGB8_A8
                                : filament::Texture::InternalFormat::RGBA8;
@@ -304,13 +309,18 @@ void FilamentRenderTarget::Copy(Image &_image) const
     case PF_FLOAT32_RGBA:
       readFormat = PF::RGBA; readType = PT::FLOAT; readBpp = 16u;
       break;
+    case PF_L8:
+      readFormat = PF::R; readType = PT::UBYTE; readBpp = 1u;
+      break;
     default:
       readFormat = PF::RGBA; readType = PT::UBYTE; readBpp = 4u;
       break;
   }
 
   const size_t rowBytes = readBpp * this->width;
-  std::vector<unsigned char> buf(rowBytes * this->height);
+  // resize keeps the allocation (and skips zeroing) from frame to frame
+  std::vector<unsigned char> &buf = this->readBuffer;
+  buf.resize(rowBytes * this->height);
   filament::backend::PixelBufferDescriptor desc(buf.data(), buf.size(),
       readFormat, readType);
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
@@ -329,12 +339,11 @@ void FilamentRenderTarget::Copy(Image &_image) const
     unsigned char *row = dst + static_cast<size_t>(y) * this->width * dstBpp;
     if (imgFormat == PF_R8G8B8 && readBpp == 4u)
     {
-      for (unsigned int x = 0; x < this->width; ++x)
-      {
-        row[x * 3u + 0u] = src[x * 4u + 0u];
-        row[x * 3u + 1u] = src[x * 4u + 1u];
-        row[x * 3u + 2u] = src[x * 4u + 2u];
-      }
+      // one 4-byte store per pixel; the next pixel overwrites the alpha
+      for (unsigned int x = 0; x + 1u < this->width; ++x)
+        std::memcpy(row + x * 3u, src + x * 4u, 4u);
+      std::memcpy(row + (this->width - 1u) * 3u,
+          src + (this->width - 1u) * 4u, 3u);
     }
     else if (imgFormat == PF_B8G8R8 && readBpp == 4u)
     {

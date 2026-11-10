@@ -19,6 +19,9 @@
 #include <cstring>
 #include <limits>
 #include <random>
+#include <string>
+#include <type_traits>
+#include <vector>
 
 #include <backend/PixelBufferDescriptor.h>
 #include <filament/Camera.h>
@@ -85,21 +88,46 @@ void FilamentDepthCamera::Destroy()
   FilamentCamera::Destroy();
 }
 
+namespace
+{
+  /// \brief Whether the depth target holds the depth's float bits as RGBA8
+  /// (gz_depth_packed) instead of R32F. Vulkan readPixels converts R32F
+  /// texel by texel but copies RGBA8 rows as they are; OpenGL reads both
+  /// directly, so it keeps R32F.
+  // ponytail: RenderTarget()->Copy() of a depth camera then reads the packed
+  // bytes on Vulkan; nothing (gz-sensors, tests) copies it, unpack if needed
+  bool PackedDepth()
+  {
+    return FilamentRenderEngine::Instance()->FilamentEngine()->getBackend()
+        == filament::Engine::Backend::VULKAN;
+  }
+}
+
 //////////////////////////////////////////////////
 void FilamentDepthCamera::CreateDepthTexture()
 {
   if (!this->depthInstance)
   {
+    const std::string matName = PackedDepth() ? "gz_depth_packed" :
+        "gz_depth";
     filament::Material *mat =
-        FilamentRenderEngine::Instance()->Material("gz_depth");
+        FilamentRenderEngine::Instance()->Material(matName);
     if (!mat)
     {
-      gzerr << "gz_depth material not available" << std::endl;
+      gzerr << matName << " material not available" << std::endl;
       return;
     }
     this->depthInstance = mat->createInstance();
   }
-  this->renderTexture->SetFormat(PF_FLOAT32_R);
+  if (PackedDepth())
+  {
+    this->renderTexture->SetFormat(PF_R8G8B8A8);
+    this->renderTexture->SetSrgb(false);
+  }
+  else
+  {
+    this->renderTexture->SetFormat(PF_FLOAT32_R);
+  }
   this->renderTexture->SetWidth(this->ImageWidth());
   this->renderTexture->SetHeight(this->ImageHeight());
 }
@@ -146,6 +174,9 @@ void FilamentDepthCamera::Render()
     this->colorTexture->PreRender();
     this->colorTexture->SetClearColor(
         FilamentConversions::ToFloat4(this->scene->BackgroundColor()));
+    // the color and the depth pass share one frame (one command buffer,
+    // one submit), closed after the depth pass
+    FilamentRenderEngine::Instance()->BeginFrame();
     // ogre2 renders this pass with its shadow node, like a camera
     this->view->setShadowingEnabled(true);
     this->colorTexture->Render(this->view);
@@ -158,11 +189,16 @@ void FilamentDepthCamera::Render()
   this->view->setVisibleLayers(0xff,
       FilamentConversions::ToSensorLayers(this->VisibilityMask()));
   const float inf = std::numeric_limits<float>::infinity();
-  this->renderTexture->SetClearColor({inf, inf, inf, 1.0f});
+  // packed: the bytes of +inf (0x7f800000), least significant first
+  if (PackedDepth())
+    this->renderTexture->SetClearColor({0.0f, 0.0f, 128.0f / 255.0f, 127.0f / 255.0f});
+  else
+    this->renderTexture->SetClearColor({inf, inf, inf, 1.0f});
   const auto &meshes = this->scene->Meshes();
   for (FilamentMesh *m : meshes)
     m->OverrideMaterial(this->depthInstance);
   this->renderTexture->Render(this->view);
+  FilamentRenderEngine::Instance()->EndFrame();
   for (FilamentMesh *m : meshes)
     m->RestoreMaterials();
 }
@@ -182,10 +218,14 @@ void FilamentDepthCamera::PostRender()
   const bool wantCloud = this->newRgbPointCloud.ConnectionCount() > 0u;
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
   this->depthRaw.resize(len);
+  const bool packedDepth = PackedDepth();
   renderer->readPixels(this->renderTexture->Native(), 0, 0, width, height,
       filament::backend::PixelBufferDescriptor(this->depthRaw.data(),
-      len * sizeof(float), filament::backend::PixelDataFormat::R,
-      filament::backend::PixelDataType::FLOAT));
+      len * sizeof(float),
+      packedDepth ? filament::backend::PixelDataFormat::RGBA :
+                    filament::backend::PixelDataFormat::R,
+      packedDepth ? filament::backend::PixelDataType::UBYTE :
+                    filament::backend::PixelDataType::FLOAT));
   const unsigned char *rgba = nullptr;
   if (wantCloud && this->colorTexture)
   {
@@ -257,7 +297,72 @@ void FilamentDepthCamera::PostRender()
   }
   std::uniform_real_distribution<double> uniform(0.0, 1.0);
 
+  // ray slopes per column and row: -(u + 0.5 - cx) / fx * d below is
+  // colK[u] * d, the same double operations in the same order
+  std::vector<double> colK(width), rowK(height);
+  for (unsigned int u = 0; u < width; ++u)
+    colK[u] = -(u + 0.5 - cx) / fx;
   for (unsigned int v = 0; v < height; ++v)
+    rowK[v] = -(v + 0.5 - cy) / fy;
+
+  // Fast path without particles: the same clamping and packing as the loop
+  // below, with no per pixel divisions and nothing else in the loop.
+  auto convert = [&](auto _cloud)
+  {
+    constexpr bool cloud = decltype(_cloud)::value;
+    const double farT = farClip - tol;
+    const double nearT = nearClip + tol;
+    float *depthOut = this->depthImage.data();
+    float *cloudOut = this->pointCloud.data();
+    for (unsigned int v = 0; v < height; ++v)
+    {
+      const double kb = rowK[v];
+      const size_t row = static_cast<size_t>(v) * width;
+      for (unsigned int u = 0; u < width; ++u)
+      {
+        const size_t i = row + u;
+        const double d = src[i];
+        const double p1 = colK[u] * d;
+        const double p2 = kb * d;
+        float x = static_cast<float>(d);
+        float y = static_cast<float>(p1);
+        float z = static_cast<float>(p2);
+        bool clamped = false;
+        if (std::isinf(d) || std::sqrt(d * d + p1 * p1 + p2 * p2) > farT)
+        {
+          x = y = z = maxVal;
+          clamped = true;
+        }
+        else if (d < nearT)
+        {
+          x = y = z = minVal;
+          clamped = true;
+        }
+        depthOut[i] = x;
+        if constexpr (cloud)
+        {
+          float *out = cloudOut + i * 4u;
+          out[0] = x;
+          out[1] = y;
+          out[2] = z;
+          const uint32_t packed = (clamped || !rgba) ? bgPacked :
+              (static_cast<uint32_t>(rgba[i * 4u]) << 24u) |
+              (static_cast<uint32_t>(rgba[i * 4u + 1u]) << 16u) |
+              (static_cast<uint32_t>(rgba[i * 4u + 2u]) << 8u) | 255u;
+          std::memcpy(&out[3], &packed, sizeof(float));
+        }
+      }
+    }
+  };
+  if (!particles)
+  {
+    if (wantCloud)
+      convert(std::true_type{});
+    else
+      convert(std::false_type{});
+  }
+
+  for (unsigned int v = 0; particles && v < height; ++v)
   {
     for (unsigned int u = 0; u < width; ++u)
     {
