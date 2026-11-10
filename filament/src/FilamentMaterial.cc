@@ -662,6 +662,23 @@ void FilamentMaterial::UpdateCustomShader()
   std::vector<filament::Material::ParameterInfo> infos(
       mat->getParameterCount());
   mat->getParameters(infos.data(), infos.size());
+  filament::TextureSampler sampler(
+      filament::TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
+      filament::TextureSampler::MagFilter::LINEAR,
+      filament::TextureSampler::WrapMode::REPEAT);
+  if (fresh)
+  {
+    // filament wants every sampler bound: white 2D, black cube until set
+    for (const auto &info : infos)
+    {
+      if (!info.isSampler)
+        continue;
+      filament::Texture *def =
+          info.samplerType == filament::backend::SamplerType::SAMPLER_CUBEMAP ?
+          engine->CubeTexture("") : engine->Texture("");
+      this->custom->setParameter(info.name, def, sampler);
+    }
+  }
   for (const ShaderParamsPtr &params :
       {this->vertexShaderParams, this->fragmentShaderParams})
   {
@@ -680,19 +697,19 @@ void FilamentMaterial::UpdateCustomShader()
       bool ok = false;
       if (info->isSampler)
       {
-        // ponytail: 2D textures only, cube maps (TEXTURE_CUBE) when a
-        // shader needs one
+        // linear texels, wrapped, like ogre2's shader param textures
+        // (ShaderParam::Value(string, uvSet) always returns false)
         std::string path;
         uint32_t uvSet = 0;
-        if (param.Type() == ShaderParam::PARAM_TEXTURE &&
-            param.Value(path, uvSet))
+        param.Value(path, uvSet);
+        filament::Texture *tex = nullptr;
+        if (param.Type() == ShaderParam::PARAM_TEXTURE)
+          tex = engine->Texture(path, nullptr, false);
+        else if (param.Type() == ShaderParam::PARAM_TEXTURE_CUBE)
+          tex = engine->CubeTexture(path, false);
+        if (tex)
         {
-          filament::TextureSampler sampler(
-              filament::TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
-              filament::TextureSampler::MagFilter::LINEAR,
-              filament::TextureSampler::WrapMode::REPEAT);
-          this->custom->setParameter(info->name, engine->Texture(path),
-              sampler);
+          this->custom->setParameter(info->name, tex, sampler);
           ok = true;
         }
       }
@@ -723,9 +740,9 @@ void FilamentMaterial::UpdateCustomShader()
       }
       if (!ok)
       {
-        gzwarn << "Shader param [" << name << "] does not match the type of "
-               << "the parameter in [" << this->customSource << "]"
-               << std::endl;
+        gzwarn << "Shader param [" << name << "] could not be set: type "
+               << "mismatch with [" << this->customSource << "] or texture "
+               << "not loaded" << std::endl;
       }
     }
     params->ClearDirty();

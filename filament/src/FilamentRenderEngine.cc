@@ -254,6 +254,9 @@ class RuntimeMatConfig : public matp::Config
   public: explicit RuntimeMatConfig(filament::backend::Backend _backend)
   {
     this->mPlatform = Platform::ALL;
+    // like the build-time matc flags (--optimize-size); the performance
+    // level's GLSL can trip Mesa's compiler (struct constructor members)
+    this->mOptimizationLevel = Optimization::SIZE;
     this->mTargetApi = _backend == filament::backend::Backend::VULKAN ?
         TargetApi::VULKAN : TargetApi::OPENGL;
   }
@@ -323,6 +326,53 @@ filament::Material *FilamentRenderEngine::CompileMaterial(
 }
 
 //////////////////////////////////////////////////
+/// \brief Top mip of an uncompressed 24/32-bit RGB(A) DDS (like waves'
+/// wave_normals.dds), which common::Image can not read. False otherwise.
+static bool LoadUncompressedDds(const std::string &_path, common::Image &_img)
+{
+  if (_path.size() < 4 ||
+      common::lowercase(_path.substr(_path.size() - 4)) != ".dds")
+  {
+    return false;
+  }
+  std::ifstream file(_path, std::ios::binary);
+  std::vector<uint8_t> dds((std::istreambuf_iterator<char>(file)),
+      std::istreambuf_iterator<char>());
+  auto u32 = [&](size_t _o)
+  {
+    return static_cast<uint32_t>(dds[_o] | (dds[_o + 1] << 8u) |
+        (dds[_o + 2] << 16u) | (dds[_o + 3] << 24u));
+  };
+  if (dds.size() < 128u || !std::equal(dds.begin(), dds.begin() + 4, "DDS ")
+      || !(u32(80) & 0x40u) || u32(112) != 0u)
+  {
+    return false;
+  }
+  const uint32_t h = u32(12), w = u32(16), bits = u32(88);
+  const uint32_t bpp = bits / 8u;
+  if ((bpp != 3u && bpp != 4u) || dds.size() < 128u + size_t(w) * h * bpp)
+    return false;
+  // channel byte offsets from the masks (little endian)
+  auto shift = [&](uint32_t _mask)
+  {
+    uint32_t b = 0;
+    while (_mask && !(_mask & 0xffu)) { _mask >>= 8u; ++b; }
+    return b;
+  };
+  const uint32_t r = shift(u32(92)), g = shift(u32(96)), b = shift(u32(100));
+  std::vector<unsigned char> rgb(size_t(w) * h * 3u);
+  for (size_t i = 0; i < size_t(w) * h; ++i)
+  {
+    const uint8_t *px = dds.data() + 128u + i * bpp;
+    rgb[i * 3] = px[r];
+    rgb[i * 3 + 1] = px[g];
+    rgb[i * 3 + 2] = px[b];
+  }
+  _img.SetFromData(rgb.data(), w, h, common::Image::RGB_INT8);
+  return true;
+}
+
+//////////////////////////////////////////////////
 filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
     std::shared_ptr<const common::Image> _data, bool _srgb)
 {
@@ -339,7 +389,7 @@ filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
     const unsigned char white[4] = {255, 255, 255, 255};
     img.SetFromData(white, 1, 1, common::Image::RGBA_INT8);
   }
-  else if (!_data)
+  else if (!_data && !LoadUncompressedDds(_path, img))
   {
     img.Load(_path);
   }

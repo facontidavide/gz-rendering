@@ -45,9 +45,12 @@ class WavesTest: public CommonRenderingTest
 /////////////////////////////////////////////////
 TEST_F(WavesTest, Waves)
 {
-  // raw GLSL shader materials: filament only runs matc-compiled materials
+  // filament draws GerstnerWaves.mat (bottom half checks pass), but renders
+  // the waves visual before it is attached to the root, so the first,
+  // background-only capture fails; its DDS textures do not load either
   CHECK_UNSUPPORTED_ENGINE("filament");
 
+  // raw GLSL shader materials: filament only runs matc-compiled materials
   if (GraphicsAPI::METAL == this->engine->GraphicsAPI())
   {
     // \todo(iche033) Test fails on ogre2 with metal. To be investigated.
@@ -95,6 +98,12 @@ TEST_F(WavesTest, Waves)
   {
     vertexShaderFile = vertexShaderGLSLFile;
     fragmentShaderFile = fragmentShaderGLSLFile;
+  }
+  else if (this->engine->Name() == "filament")
+  {
+    // filament takes material definitions, one .mat for both stages
+    vertexShaderFile = "GerstnerWaves.mat";
+    fragmentShaderFile = "GerstnerWaves.mat";
   }
   else
   {
