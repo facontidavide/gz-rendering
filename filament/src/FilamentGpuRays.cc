@@ -20,6 +20,7 @@
 #include <cstring>
 #include <limits>
 #include <random>
+#include <string>
 
 #include <filament/Camera.h>
 #include <filament/Engine.h>
@@ -63,6 +64,16 @@ namespace
   using filament_cube::Face;
   using filament_cube::FaceTransform;
   using filament_cube::kFaces;
+
+  /// \brief Whether the scan target holds the range's float bits as RGBA8
+  /// (gz_lidar_sample_packed) instead of R32F. Vulkan readPixels converts
+  /// R32F texel by texel (0.5 ms for 2048x128 rays) but copies RGBA8 rows
+  /// as they are; OpenGL reads both directly, so it keeps R32F.
+  bool PackedScan()
+  {
+    return FilamentRenderEngine::Instance()->FilamentEngine()->getBackend()
+        == filament::Engine::Backend::VULKAN;
+  }
 }
 
 //////////////////////////////////////////////////
@@ -110,11 +121,13 @@ void FilamentGpuRays::Init()
 void FilamentGpuRays::InitSamplePass()
 {
   auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+  const std::string matName = PackedScan() ? "gz_lidar_sample_packed" :
+      "gz_lidar_sample";
   filament::Material *mat =
-      FilamentRenderEngine::Instance()->Material("gz_lidar_sample");
+      FilamentRenderEngine::Instance()->Material(matName);
   if (!mat)
   {
-    gzerr << "gz_lidar_sample material not available" << std::endl;
+    gzerr << matName << " material not available" << std::endl;
     return;
   }
   this->sampleInstance = mat->createInstance();
@@ -158,7 +171,15 @@ void FilamentGpuRays::InitSamplePass()
 
   this->scanTexture = std::dynamic_pointer_cast<FilamentRenderTexture>(
       this->scene->CreateRenderTexture());
-  this->scanTexture->SetFormat(PF_FLOAT32_R);
+  if (PackedScan())
+  {
+    this->scanTexture->SetFormat(PF_R8G8B8A8);
+    this->scanTexture->SetSrgb(false);
+  }
+  else
+  {
+    this->scanTexture->SetFormat(PF_FLOAT32_R);
+  }
 }
 
 //////////////////////////////////////////////////
@@ -403,22 +424,12 @@ void FilamentGpuRays::Render()
   const auto &meshes = this->scene->Meshes();
   for (FilamentMesh *m : meshes)
     m->OverrideMaterial(this->depthInstance);
-  // every used face into its own atlas slot, then a single readback: the
-  // first pass clears the whole attachment, the others keep it
   auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
-  unsigned int slot = 0u;
-  for (int f = 0; f < 6; ++f)
-  {
-    if (!this->faceUsed[f])
-      continue;
-    tm.setTransform(camInst, FaceTransform(kFaces[f]));
-    const filament::Viewport vp{static_cast<int32_t>(slot * n), 0, n, n};
-    this->renderTexture->Render(this->view, &vp, slot == 0u);
-    ++slot;
-  }
-  // second pass: one fragment per ray samples the atlas, only the scan is
-  // read back (the atlas is up to 6 MB, a VLP-16 scan 115 KB)
+  // second pass setup: one fragment per ray samples the atlas, only the
+  // scan is read back (the atlas is up to 6 MB, a VLP-16 scan 115 KB).
+  // Parameters are set before the frame opens: a frame commits material
+  // instances once, at its start.
   const unsigned int hCount = std::max(this->RangeCount(), 1);
   const unsigned int vCount = std::max(this->VerticalRangeCount(), 1);
   this->sampleInstance->setParameter("atlas",
@@ -432,13 +443,34 @@ void FilamentGpuRays::Render()
     this->scanTexture->SetHeight(vCount);
   }
   this->scanTexture->PreRender();
+
+  // every used face into its own atlas slot, then the sample pass, all in
+  // one frame: one submit instead of one standalone frame per pass, which
+  // costs about 0.6 ms each on NVIDIA Vulkan. The first face pass clears
+  // the whole attachment, the others keep it.
+  FilamentRenderEngine::Instance()->BeginFrame();
+  unsigned int slot = 0u;
+  for (int f = 0; f < 6; ++f)
+  {
+    if (!this->faceUsed[f])
+      continue;
+    tm.setTransform(camInst, FaceTransform(kFaces[f]));
+    const filament::Viewport vp{static_cast<int32_t>(slot * n), 0, n, n};
+    this->renderTexture->Render(this->view, &vp, slot == 0u);
+    ++slot;
+  }
   this->scanTexture->Render(this->sampleView);
+  FilamentRenderEngine::Instance()->EndFrame();
   this->ranges.resize(static_cast<size_t>(hCount) * vCount);
+  // packed: 4 bytes per ray that are the float range, little endian
+  const bool packed = PackedScan();
   renderer->readPixels(this->scanTexture->Native(), 0, 0, hCount, vCount,
       filament::backend::PixelBufferDescriptor(this->ranges.data(),
       this->ranges.size() * sizeof(float),
-      filament::backend::PixelDataFormat::R,
-      filament::backend::PixelDataType::FLOAT));
+      packed ? filament::backend::PixelDataFormat::RGBA :
+               filament::backend::PixelDataFormat::R,
+      packed ? filament::backend::PixelDataType::UBYTE :
+               filament::backend::PixelDataType::FLOAT));
   engine->flushAndWait();
   for (FilamentMesh *m : meshes)
     m->RestoreMaterials();
@@ -450,9 +482,16 @@ void FilamentGpuRays::PostRender()
   const unsigned int hCount = std::max(this->RangeCount(), 1);
   const unsigned int vCount = std::max(this->VerticalRangeCount(), 1);
   const unsigned int channels = this->Channels();
-  this->scan.assign(static_cast<size_t>(hCount) * vCount * channels, 0.0f);
+  // only the range channel changes from frame to frame: zero the scan
+  // when its size changes, then write ranges over the old ones
+  const size_t scanSize = static_cast<size_t>(hCount) * vCount * channels;
+  if (this->scan.size() != scanSize)
+    this->scan.assign(scanSize, 0.0f);
   if (this->rays.size() != static_cast<size_t>(hCount) * vCount)
+  {
+    std::fill(this->scan.begin(), this->scan.end(), 0.0f);
     return;
+  }
 
   // particles: half resolution depth of the nearest particle per used cube
   // face, like ogre2's particle pass, sampled at the ray's texel
@@ -490,6 +529,25 @@ void FilamentGpuRays::PostRender()
 
   const float nearClip = static_cast<float>(this->NearClipPlane());
   const float farClip = static_cast<float>(this->FarClipPlane());
+  const float maxVal = this->dataMaxVal;
+  const float minVal = this->dataMinVal;
+  if (!particles && this->ranges.size() >= this->rays.size())
+  {
+    // same clamping as the loop below, without its per-ray particle and
+    // bounds checks: non finite or beyond far -> max, nearer than near -> min
+    const float *src = this->ranges.data();
+    float *dst = this->scan.data();
+    const size_t count = this->rays.size();
+    for (size_t k = 0; k < count; ++k)
+    {
+      const float range = src[k];
+      dst[k * channels] = !std::isfinite(range) || range > farClip ?
+          maxVal : (range < nearClip ? minVal : range);
+    }
+    this->newFrame(this->scan.data(), hCount, vCount, channels,
+        "PF_FLOAT32_RGB");
+    return;
+  }
   for (size_t k = 0; k < this->rays.size(); ++k)
   {
     float range = k < this->ranges.size() ? this->ranges[k] :

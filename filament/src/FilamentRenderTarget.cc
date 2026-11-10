@@ -203,7 +203,11 @@ void FilamentRenderTarget::Render(filament::View *_view,
   _view->setRenderTarget(this->target);
   _view->setViewport(_viewport ? *_viewport :
       filament::Viewport{0, 0, this->width, this->height});
-  renderer->renderStandaloneView(_view);
+  auto *engine = FilamentRenderEngine::Instance();
+  if (engine->InFrame())
+    renderer->render(_view);
+  else
+    renderer->renderStandaloneView(_view);
 }
 
 //////////////////////////////////////////////////

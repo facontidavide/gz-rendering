@@ -84,6 +84,18 @@ namespace gz
       /// \brief Shared filament renderer
       public: filament::Renderer *Renderer() const;
 
+      /// \brief Open a frame on a headless swap chain: until EndFrame,
+      /// FilamentRenderTarget::Render records into this one frame instead
+      /// of submitting a standalone frame per call. Several passes then
+      /// share one engine prepare, one command buffer and one submit.
+      public: void BeginFrame();
+
+      /// \brief Close (and submit) the frame opened by BeginFrame
+      public: void EndFrame();
+
+      /// \brief True between BeginFrame and EndFrame
+      public: bool InFrame() const;
+
       /// \brief Get (and lazily load) a compiled material package by name,
       /// e.g. "gz_lit", looked up under the engine resource path.
       public: filament::Material *Material(const std::string &_name);
