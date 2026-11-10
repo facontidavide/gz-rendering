@@ -457,9 +457,16 @@ void FilamentGpuRays::PostRender()
   const unsigned int hCount = std::max(this->RangeCount(), 1);
   const unsigned int vCount = std::max(this->VerticalRangeCount(), 1);
   const unsigned int channels = this->Channels();
-  this->scan.assign(static_cast<size_t>(hCount) * vCount * channels, 0.0f);
+  // only the range channel changes from frame to frame: zero the scan
+  // when its size changes, then write ranges over the old ones
+  const size_t scanSize = static_cast<size_t>(hCount) * vCount * channels;
+  if (this->scan.size() != scanSize)
+    this->scan.assign(scanSize, 0.0f);
   if (this->rays.size() != static_cast<size_t>(hCount) * vCount)
+  {
+    std::fill(this->scan.begin(), this->scan.end(), 0.0f);
     return;
+  }
 
   // particles: half resolution depth of the nearest particle per used cube
   // face, like ogre2's particle pass, sampled at the ray's texel
@@ -497,6 +504,25 @@ void FilamentGpuRays::PostRender()
 
   const float nearClip = static_cast<float>(this->NearClipPlane());
   const float farClip = static_cast<float>(this->FarClipPlane());
+  const float maxVal = this->dataMaxVal;
+  const float minVal = this->dataMinVal;
+  if (!particles && this->ranges.size() >= this->rays.size())
+  {
+    // same clamping as the loop below, without its per-ray particle and
+    // bounds checks: non finite or beyond far -> max, nearer than near -> min
+    const float *src = this->ranges.data();
+    float *dst = this->scan.data();
+    const size_t count = this->rays.size();
+    for (size_t k = 0; k < count; ++k)
+    {
+      const float range = src[k];
+      dst[k * channels] = !std::isfinite(range) || range > farClip ?
+          maxVal : (range < nearClip ? minVal : range);
+    }
+    this->newFrame(this->scan.data(), hCount, vCount, channels,
+        "PF_FLOAT32_RGB");
+    return;
+  }
   for (size_t k = 0; k < this->rays.size(); ++k)
   {
     float range = k < this->ranges.size() ? this->ranges[k] :
