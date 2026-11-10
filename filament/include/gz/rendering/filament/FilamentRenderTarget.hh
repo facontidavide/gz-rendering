@@ -107,6 +107,9 @@ namespace gz
       protected: filament::math::float4 clearColor{0.0f, 0.0f, 0.0f, 1.0f};
 
       protected: bool srgb{true};
+
+      /// \brief Readback staging buffer of Copy(), kept across frames
+      private: mutable std::vector<unsigned char> readBuffer;
     };
 
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentRenderTexture :

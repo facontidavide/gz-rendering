@@ -267,7 +267,9 @@ void FilamentRenderTarget::Copy(Image &_image) const
   }
 
   const size_t rowBytes = readBpp * this->width;
-  std::vector<unsigned char> buf(rowBytes * this->height);
+  // resize keeps the allocation (and skips zeroing) from frame to frame
+  std::vector<unsigned char> &buf = this->readBuffer;
+  buf.resize(rowBytes * this->height);
   filament::backend::PixelBufferDescriptor desc(buf.data(), buf.size(),
       readFormat, readType);
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
@@ -286,12 +288,11 @@ void FilamentRenderTarget::Copy(Image &_image) const
     unsigned char *row = dst + static_cast<size_t>(y) * this->width * dstBpp;
     if (imgFormat == PF_R8G8B8 && readBpp == 4u)
     {
-      for (unsigned int x = 0; x < this->width; ++x)
-      {
-        row[x * 3u + 0u] = src[x * 4u + 0u];
-        row[x * 3u + 1u] = src[x * 4u + 1u];
-        row[x * 3u + 2u] = src[x * 4u + 2u];
-      }
+      // one 4-byte store per pixel; the next pixel overwrites the alpha
+      for (unsigned int x = 0; x + 1u < this->width; ++x)
+        std::memcpy(row + x * 3u, src + x * 4u, 4u);
+      std::memcpy(row + (this->width - 1u) * 3u,
+          src + (this->width - 1u) * 4u, 3u);
     }
     else if (imgFormat == PF_B8G8R8 && readBpp == 4u)
     {
