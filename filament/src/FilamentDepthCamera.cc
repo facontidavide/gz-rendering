@@ -174,6 +174,9 @@ void FilamentDepthCamera::Render()
     this->colorTexture->PreRender();
     this->colorTexture->SetClearColor(
         FilamentConversions::ToFloat4(this->scene->BackgroundColor()));
+    // the color and the depth pass share one frame (one command buffer,
+    // one submit), closed after the depth pass
+    FilamentRenderEngine::Instance()->BeginFrame();
     // ogre2 renders this pass with its shadow node, like a camera
     this->view->setShadowingEnabled(true);
     this->colorTexture->Render(this->view);
@@ -195,6 +198,7 @@ void FilamentDepthCamera::Render()
   for (FilamentMesh *m : meshes)
     m->OverrideMaterial(this->depthInstance);
   this->renderTexture->Render(this->view);
+  FilamentRenderEngine::Instance()->EndFrame();
   for (FilamentMesh *m : meshes)
     m->RestoreMaterials();
 }
