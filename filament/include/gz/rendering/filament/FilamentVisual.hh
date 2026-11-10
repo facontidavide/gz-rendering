@@ -59,6 +59,18 @@ namespace gz
 
       protected: virtual bool DetachGeometry(GeometryPtr _geometry) override;
 
+      protected: virtual bool AttachChild(NodePtr _child) override;
+
+      protected: virtual bool DetachChild(NodePtr _child) override;
+
+      /// \brief True if the parent chain reaches the scene's root visual
+      protected: bool InSceneGraph() const;
+
+      /// \brief Add (or remove) this visual's and its descendants'
+      /// renderables to (from) the filament scene
+      /// \param[in] _inScene True to add, false to remove
+      protected: void SetInScene(bool _inScene);
+
       protected: virtual void Init() override;
 
       /// \brief Push the current visibility state to the geometries

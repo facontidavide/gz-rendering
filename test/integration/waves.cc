@@ -45,11 +45,6 @@ class WavesTest: public CommonRenderingTest
 /////////////////////////////////////////////////
 TEST_F(WavesTest, Waves)
 {
-  // filament draws GerstnerWaves.mat (bottom half checks pass), but renders
-  // the waves visual before it is attached to the root, so the first,
-  // background-only capture fails; its DDS textures do not load either
-  CHECK_UNSUPPORTED_ENGINE("filament");
-
   // raw GLSL shader materials: filament only runs matc-compiled materials
   if (GraphicsAPI::METAL == this->engine->GraphicsAPI())
   {
