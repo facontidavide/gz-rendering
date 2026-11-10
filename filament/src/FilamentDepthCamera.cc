@@ -22,6 +22,9 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 #include <backend/PixelBufferDescriptor.h>
 #include <filament/Camera.h>
@@ -141,6 +144,27 @@ namespace
   /// enables for shadow passes).
   constexpr double kNearScale = 0.1;
   constexpr double kFarScale = 1.1;
+
+  /// \brief The largest r2 with sqrt(r2) <= _far, so that
+  /// sqrt(r2) > _far exactly when r2 > FarRangeSq(_far). sqrt is correctly
+  /// rounded and monotonic, so this threshold gives the same decision as
+  /// the square root, bit for bit, without one per pixel.
+  double FarRangeSq(double _far)
+  {
+    const double maxD = std::numeric_limits<double>::max();
+    // NaN: never beyond; negative: every non-NaN r2 is beyond
+    if (std::isnan(_far) || _far < 0.0)
+      return _far < 0.0 ? -1.0 : _far;
+    double s = _far * _far;
+    // overflow: only r2 = inf has a root beyond a finite _far
+    if (std::isinf(s))
+      return std::isinf(_far) ? s : maxD;
+    while (s > 0.0 && std::sqrt(s) > _far)
+      s = std::nextafter(s, 0.0);
+    while (s < maxD && std::sqrt(std::nextafter(s, maxD)) <= _far)
+      s = std::nextafter(s, maxD);
+    return s;
+  }
 }
 
 //////////////////////////////////////////////////
@@ -305,46 +329,89 @@ void FilamentDepthCamera::PostRender()
   for (unsigned int v = 0; v < height; ++v)
     rowK[v] = -(v + 0.5 - cy) / fy;
 
+  // sqrt(r2) > farClip - tol, without the square root
+  const double farSq = FarRangeSq(farClip - tol);
+
   // Fast path without particles: the same clamping and packing as the loop
-  // below, with no per pixel divisions and nothing else in the loop.
+  // below, with no per pixel divisions or square roots.
   auto convert = [&](auto _cloud)
   {
     constexpr bool cloud = decltype(_cloud)::value;
-    const double farT = farClip - tol;
     const double nearT = nearClip + tol;
+#if defined(__SSE2__)
+    // the least float >= nearT: for a float f, f < nearT <=> f < nearF
+    float nearFl = static_cast<float>(nearT);
+    if (static_cast<double>(nearFl) < nearT)
+      nearFl = std::nextafter(nearFl, maxVal);
+    const __m128 nearF = _mm_set1_ps(nearFl);
+    const __m128d farSqD = _mm_set1_pd(farSq);
+    const __m128 absF = _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff));
+    const __m128 maxF = _mm_set1_ps(maxVal);
+    const __m128 minF = _mm_set1_ps(minVal);
+#endif
     float *depthOut = this->depthImage.data();
     float *cloudOut = this->pointCloud.data();
     for (unsigned int v = 0; v < height; ++v)
     {
       const double kb = rowK[v];
       const size_t row = static_cast<size_t>(v) * width;
-      for (unsigned int u = 0; u < width; ++u)
+      unsigned int u = 0;
+#if defined(__SSE2__)
+      // depth only, four pixels per step: the same double operations as the
+      // scalar loop, two lanes at a time; the unclamped output is the input
+      // float itself, like the scalar loop's float -> double -> float
+      if constexpr (!cloud)
+      {
+        const __m128d kbD = _mm_set1_pd(kb);
+        for (; u + 4u <= width; u += 4u)
+        {
+          const size_t i = row + u;
+          const __m128 f = _mm_loadu_ps(src + i);
+          const __m128d d0 = _mm_cvtps_pd(f);
+          const __m128d d1 = _mm_cvtps_pd(_mm_movehl_ps(f, f));
+          const __m128d q0 = _mm_mul_pd(_mm_loadu_pd(&colK[u]), d0);
+          const __m128d q1 = _mm_mul_pd(_mm_loadu_pd(&colK[u + 2u]), d1);
+          const __m128d r0 = _mm_mul_pd(kbD, d0);
+          const __m128d r1 = _mm_mul_pd(kbD, d1);
+          // (d * d + p1 * p1) + p2 * p2 > farSq
+          const __m128d s0 = _mm_add_pd(_mm_add_pd(_mm_mul_pd(d0, d0),
+              _mm_mul_pd(q0, q0)), _mm_mul_pd(r0, r0));
+          const __m128d s1 = _mm_add_pd(_mm_add_pd(_mm_mul_pd(d1, d1),
+              _mm_mul_pd(q1, q1)), _mm_mul_pd(r1, r1));
+          const __m128 beyond = _mm_shuffle_ps(
+              _mm_castpd_ps(_mm_cmpgt_pd(s0, farSqD)),
+              _mm_castpd_ps(_mm_cmpgt_pd(s1, farSqD)), _MM_SHUFFLE(2, 0, 2, 0));
+          const __m128 far = _mm_or_ps(beyond,
+              _mm_cmpeq_ps(_mm_and_ps(f, absF), maxF));
+          const __m128 clamped = _mm_or_ps(far, _mm_cmplt_ps(f, nearF));
+          const __m128 c = _mm_or_ps(_mm_and_ps(far, maxF),
+              _mm_andnot_ps(far, minF));
+          _mm_storeu_ps(depthOut + i, _mm_or_ps(_mm_and_ps(clamped, c),
+              _mm_andnot_ps(clamped, f)));
+        }
+      }
+#endif
+      for (; u < width; ++u)
       {
         const size_t i = row + u;
         const double d = src[i];
         const double p1 = colK[u] * d;
         const double p2 = kb * d;
-        float x = static_cast<float>(d);
-        float y = static_cast<float>(p1);
-        float z = static_cast<float>(p2);
-        bool clamped = false;
-        if (std::isinf(d) || std::sqrt(d * d + p1 * p1 + p2 * p2) > farT)
-        {
-          x = y = z = maxVal;
-          clamped = true;
-        }
-        else if (d < nearT)
-        {
-          x = y = z = minVal;
-          clamped = true;
-        }
-        depthOut[i] = x;
+        // converted unconditionally (exact, or unused when clamped) so the
+        // selects below need no branches
+        const float x = static_cast<float>(d);
+        const bool far = std::isinf(d) | (d * d + p1 * p1 + p2 * p2 > farSq);
+        const bool clamped = far | (d < nearT);
+        const float c = far ? maxVal : minVal;
+        depthOut[i] = clamped ? c : x;
         if constexpr (cloud)
         {
+          const float y = static_cast<float>(p1);
+          const float z = static_cast<float>(p2);
           float *out = cloudOut + i * 4u;
-          out[0] = x;
-          out[1] = y;
-          out[2] = z;
+          out[0] = clamped ? c : x;
+          out[1] = clamped ? c : y;
+          out[2] = clamped ? c : z;
           const uint32_t packed = (clamped || !rgba) ? bgPacked :
               (static_cast<uint32_t>(rgba[i * 4u]) << 24u) |
               (static_cast<uint32_t>(rgba[i * 4u + 1u]) << 16u) |
@@ -388,8 +455,7 @@ void FilamentDepthCamera::PostRender()
       // camera frame: X forward, Y left, Z up
       double p[3] = {d, -(u + 0.5 - cx) / fx * d, -(v + 0.5 - cy) / fy * d};
       bool clamped = false;
-      if (std::isinf(d) ||
-          std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) > farClip - tol)
+      if (std::isinf(d) || p[0] * p[0] + p[1] * p[1] + p[2] * p[2] > farSq)
       {
         p[0] = p[1] = p[2] = maxVal;
         clamped = true;
