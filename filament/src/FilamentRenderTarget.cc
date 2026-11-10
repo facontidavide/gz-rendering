@@ -120,6 +120,11 @@ void FilamentRenderTarget::BuildAttachments(filament::RenderTarget *&_target,
     case PF_FLOAT32_RGBA:
       colorFormat = filament::Texture::InternalFormat::RGBA32F;
       break;
+    case PF_L8:
+      // like ogre2, which renders grey scale natively into R8 unorm: the
+      // linear red channel, no sRGB encoding
+      colorFormat = filament::Texture::InternalFormat::R8;
+      break;
     default:
       colorFormat = this->srgb ? filament::Texture::InternalFormat::SRGB8_A8
                                : filament::Texture::InternalFormat::RGBA8;
@@ -252,6 +257,9 @@ void FilamentRenderTarget::Copy(Image &_image) const
       break;
     case PF_FLOAT32_RGBA:
       readFormat = PF::RGBA; readType = PT::FLOAT; readBpp = 16u;
+      break;
+    case PF_L8:
+      readFormat = PF::R; readType = PT::UBYTE; readBpp = 1u;
       break;
     default:
       readFormat = PF::RGBA; readType = PT::UBYTE; readBpp = 4u;
