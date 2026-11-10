@@ -805,6 +805,9 @@ namespace
     p["u_color"].UpdateBuffer(color);
     p["u_adjustments"].InitializeBuffer(16);
     p["u_adjustments"].UpdateBuffer(adjustments);
+    // ogre2 auto-binds this one once named; filament has getClipFromWorld...
+    if (_engineName == "ogre2")
+      (*box->Material()->VertexShaderParams())["worldviewproj_matrix"] = 1;
 
     root->AddChild(box);
 
