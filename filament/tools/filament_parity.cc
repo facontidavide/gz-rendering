@@ -39,6 +39,8 @@
 // see Markers()
 // PARITY_PROJECTOR=<png>: only a projector of the picture over a floor seen
 // from above, written to projector.png, see ProjectTexture()
+// PARITY_SHADER=1: only the custom_shaders_uniforms box (GLSL on ogre2, its
+// .mat port on filament), shader.png
 // PARITY_PROJECTION=1: only custom (off-center intrinsics) and orthographic
 // projections on depth, bbox and RGB cameras, see Projection()
 // PARITY_ACTOR=1: adds two skinned walking actors (test/media/meshes/
@@ -79,6 +81,7 @@
 #include <gz/rendering/Heightmap.hh>
 #include <gz/rendering/Light.hh>
 #include <gz/rendering/Mesh.hh>
+#include <gz/rendering/ShaderParams.hh>
 #include <gz/rendering/Image.hh>
 #include <gz/rendering/LensFlarePass.hh>
 #include <gz/rendering/GpuRays.hh>
@@ -756,6 +759,73 @@ namespace
     png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
         common::Image::RGB_INT8);
     png.SavePNG(_dir + "/projector.png");
+    _engine->DestroyScene(scene);
+  }
+
+  /// \brief PARITY_SHADER=1: shader.png, the custom_shaders_uniforms example
+  /// box: its GLSL 330 shaders on ogre2, its .mat port on filament
+  void CustomShader(RenderEngine *_engine, const std::string &_engineName,
+      const std::string &_dir)
+  {
+    ScenePtr scene = _engine->CreateScene("shader");
+    scene->SetBackgroundColor(0, 0, 0);
+    scene->SetAmbientLight(0.3, 0.3, 0.3);
+    VisualPtr root = scene->RootVisual();
+    const std::string media = std::string(PROJECT_SOURCE_PATH) +
+        "/examples/custom_shaders_uniforms/media/";
+    MaterialPtr shader = scene->CreateMaterial();
+    if (_engineName == "filament")
+    {
+      shader->SetVertexShader(media + "custom_shader.mat");
+      shader->SetFragmentShader(media + "custom_shader.mat");
+    }
+    else
+    {
+      shader->SetVertexShader(media + "vertex_shader_330.glsl");
+      shader->SetFragmentShader(media + "fragment_shader_330.glsl");
+    }
+    // the example's uniforms, u_seed advanced a few frames
+    int seed[1] = {3};
+    float resolution[2] = {400, 200};
+    float color[3] = {1.0f, 0.8f, 0.4f};
+    float adjustments[16] = {0, 0, 0, 0.0005f, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0};
+    ShaderParams &p = *shader->FragmentShaderParams();
+    p["u_seed"].InitializeBuffer(1);
+    p["u_seed"].UpdateBuffer(seed);
+    p["u_resolution"].InitializeBuffer(2);
+    p["u_resolution"].UpdateBuffer(resolution);
+    p["u_color"].InitializeBuffer(3);
+    p["u_color"].UpdateBuffer(color);
+    p["u_adjustments"].InitializeBuffer(16);
+    p["u_adjustments"].UpdateBuffer(adjustments);
+
+    VisualPtr box = scene->CreateVisual();
+    box->AddGeometry(scene->CreateBox());
+    box->SetLocalPosition(0, 1, 0);
+    box->SetLocalScale(2, 2, 2);
+    if (std::string(std::getenv("PARITY_SHADER")) == "plain")
+      box->SetMaterial("Default/TransRed");
+    else
+      box->SetMaterial(shader);
+    root->AddChild(box);
+
+    CameraPtr cam = scene->CreateCamera();
+    cam->SetImageWidth(400);
+    cam->SetImageHeight(300);
+    cam->SetAspectRatio(400.0 / 300.0);
+    cam->SetHFOV(GZ_PI / 2);
+    // the example's first camera pose, facing the box
+    cam->SetLocalPosition(3, 3, 0);
+    cam->SetLocalRotation(0, 0, std::atan2(-2.0, -3.0));
+    root->AddChild(cam);
+    Image img = cam->CreateImage();
+    cam->Capture(img);
+    cam->Capture(img);
+    common::Image png;
+    png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
+        common::Image::RGB_INT8);
+    png.SavePNG(_dir + "/shader.png");
     _engine->DestroyScene(scene);
   }
 
@@ -1541,6 +1611,13 @@ int main(int _argc, char **_argv)
   if (const char *png = std::getenv("PARITY_PROJECTOR"))
   {
     ProjectTexture(engine, png, dir);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
+
+  if (std::getenv("PARITY_SHADER"))
+  {
+    CustomShader(engine, _argv[1], dir);
     std::cout << "wrote " << dir << std::endl;
     return 0;
   }

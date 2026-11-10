@@ -28,6 +28,10 @@
 #include <filament/SwapChain.h>
 #include <filament/Texture.h>
 #include <backend/PixelBufferDescriptor.h>
+#include <filamat/MaterialBuilder.h>
+#include <filamat/Package.h>
+#include <filament-matp/Config.h>
+#include <filament-matp/MaterialParser.h>
 
 #include <gz/common/Console.hh>
 #include <gz/common/Filesystem.hh>
@@ -206,6 +210,16 @@ filament::Material *FilamentRenderEngine::Material(const std::string &_name)
   if (it != this->dataPtr->materials.end())
     return it->second;
 
+  // A path to a filament material source (Material::SetFragmentShader with
+  // a .mat file): compiled at runtime, cached under its path.
+  if (_name.size() > 4 && _name.compare(_name.size() - 4, 4, ".mat") == 0)
+  {
+    filament::Material *mat = this->CompileMaterial(_name);
+    if (mat)
+      this->dataPtr->materials[_name] = mat;
+    return mat;
+  }
+
   std::string path = common::joinPaths(this->dataPtr->resourcePath,
       "materials", _name + ".filamat");
   std::ifstream in(path, std::ios::binary);
@@ -227,6 +241,84 @@ filament::Material *FilamentRenderEngine::Material(const std::string &_name)
     return nullptr;
   }
   this->dataPtr->materials[_name] = mat;
+  return mat;
+}
+
+//////////////////////////////////////////////////
+namespace
+{
+/// \brief matc's options for the running backend, all platforms (the GL
+/// backend may run on an OpenGL ES context)
+class RuntimeMatConfig : public matp::Config
+{
+  public: explicit RuntimeMatConfig(filament::backend::Backend _backend)
+  {
+    this->mPlatform = Platform::ALL;
+    this->mTargetApi = _backend == filament::backend::Backend::VULKAN ?
+        TargetApi::VULKAN : TargetApi::OPENGL;
+  }
+  public: Output *getOutput() const noexcept override { return nullptr; }
+  public: Input *getInput() const noexcept override { return nullptr; }
+  public: std::string toString() const noexcept override { return ""; }
+  public: std::string toPIISafeString() const noexcept override
+  { return ""; }
+};
+}
+
+//////////////////////////////////////////////////
+filament::Material *FilamentRenderEngine::CompileMaterial(
+    const std::string &_path)
+{
+  std::ifstream in(_path, std::ios::binary);
+  if (!in)
+  {
+    gzerr << "Unable to open filament material source [" << _path << "]"
+          << std::endl;
+    return nullptr;
+  }
+  std::string text((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+  ssize_t size = static_cast<ssize_t>(text.size());
+  std::unique_ptr<char[]> chars(new char[text.size()]);
+  std::memcpy(chars.get(), text.data(), text.size());
+  std::unique_ptr<const char[]> buffer(chars.release());
+
+  // ponytail: compiles on the render thread (~1 s per material, for the
+  // running backend only), cached per path for the engine's lifetime; an
+  // on-disk .filamat cache if startup time matters. No #include support.
+  auto *engine = this->dataPtr->engine;
+  RuntimeMatConfig config(engine->getBackend());
+  filamat::MaterialBuilder::init();
+  filament::Material *mat = nullptr;
+  {
+    filamat::MaterialBuilder builder;
+    matp::MaterialParser parser;
+    ::utils::Status status = parser.parse(builder, config, size, buffer);
+    if (!status.isOk())
+    {
+      gzerr << "Failed to parse filament material [" << _path << "]: "
+            << status.getMessage() << std::endl;
+    }
+    else
+    {
+      // the engine's job system: the render thread already adopted it
+      filamat::Package package = builder.build(engine->getJobSystem());
+      if (!package.isValid())
+      {
+        gzerr << "Failed to compile filament material [" << _path << "]"
+              << std::endl;
+      }
+      else
+      {
+        mat = filament::Material::Builder()
+            .package(package.getData(), package.getSize())
+            .build(*engine);
+      }
+    }
+  }
+  filamat::MaterialBuilder::shutdown();
+  if (mat)
+    gzmsg << "Compiled filament material [" << _path << "]" << std::endl;
   return mat;
 }
 
