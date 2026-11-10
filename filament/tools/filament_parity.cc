@@ -54,6 +54,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <sstream>
 
 #include <gz/common/Console.hh>
@@ -706,6 +707,103 @@ namespace
   /// sensor: affected fraction, mean and std of the finite affected values,
   /// mean of the baseline where both are finite. rgb_particles.png is for
   /// eyeballing.
+  /// \brief PARITY_MULTI: a depth camera and two lidars updated together,
+  /// per frame scene PreRender, then either Render + PostRender per sensor
+  /// (gz-sensors today, multi_seq) or every Render, then every PostRender
+  /// (render ahead, multi_ahead). Timing lines: wall median and p90 per
+  /// frame, then process CPU ms per frame (all threads, median).
+  void Multi(ScenePtr _scene, const std::string &_dir, std::ofstream &_index,
+      std::ofstream &_timing, int _frames,
+      const std::vector<DepthCfg> &_depthCfgs,
+      const std::vector<RaysCfg> &_raysCfgs)
+  {
+    std::vector<CameraPtr> sensors;
+    std::vector<std::vector<float>> data;
+    std::vector<std::string> names;
+    std::vector<common::ConnectionPtr> conns;
+    data.reserve(3);
+    for (const auto &c : _depthCfgs)
+    {
+      if (c.name != "depthB")
+        continue;
+      DepthCameraPtr cam = _scene->CreateDepthCamera("multi_" + c.name);
+      cam->SetLocalPose(c.pose);
+      cam->SetImageWidth(c.w);
+      cam->SetImageHeight(c.h);
+      cam->SetAspectRatio(static_cast<double>(c.w) / c.h);
+      cam->SetHFOV(c.hfov);
+      cam->SetNearClipPlane(c.nearClip);
+      cam->SetFarClipPlane(c.farClip);
+      cam->CreateDepthTexture();
+      _scene->RootVisual()->AddChild(cam);
+      data.emplace_back(c.w * c.h);
+      std::vector<float> *d = &data.back();
+      conns.push_back(cam->ConnectNewDepthFrame(
+          [d](const float *_d, unsigned int, unsigned int, unsigned int,
+              const std::string &) {
+            std::memcpy(d->data(), _d, d->size() * sizeof(float)); }));
+      sensors.push_back(cam);
+      names.push_back("multi_" + c.name + "_depth");
+    }
+    for (const auto &c : _raysCfgs)
+    {
+      if (c.name != "os1_64" && c.name != "s2l2")
+        continue;
+      GpuRaysPtr rays = _scene->CreateGpuRays("multi_" + c.name);
+      rays->SetLocalPose(c.pose);
+      rays->SetNearClipPlane(c.nearClip);
+      rays->SetFarClipPlane(c.farClip);
+      rays->SetClamp(c.clamp);
+      rays->SetAngleMin(c.hMin);
+      rays->SetAngleMax(c.hMax);
+      rays->SetRayCount(c.hCount);
+      rays->SetVerticalRayCount(c.vCount);
+      rays->SetVerticalAngleMin(c.vMin);
+      rays->SetVerticalAngleMax(c.vMax);
+      _scene->RootVisual()->AddChild(rays);
+      data.emplace_back(c.hCount * c.vCount * rays->Channels());
+      std::vector<float> *d = &data.back();
+      conns.push_back(rays->ConnectNewGpuRaysFrame(
+          [d](const float *_d, unsigned int, unsigned int, unsigned int,
+              const std::string &) {
+            std::memcpy(d->data(), _d, d->size() * sizeof(float)); }));
+      sensors.push_back(rays);
+      names.push_back("multi_" + c.name);
+    }
+    auto cpuMs = [] {
+      timespec ts;
+      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+      return ts.tv_sec * 1e3 + ts.tv_nsec * 1e-6; };
+    for (bool ahead : {false, true})
+    {
+      std::vector<double> cpu;
+      auto frame = [&] {
+        const double c0 = cpuMs();
+        _scene->PreRender();
+        for (auto &s : sensors)
+        {
+          s->Render();
+          if (!ahead)
+            s->PostRender();
+        }
+        if (ahead)
+        {
+          for (auto &s : sensors)
+            s->PostRender();
+        }
+        if (!_scene->LegacyAutoGpuFlush())
+          _scene->PostRender();
+        cpu.push_back(cpuMs() - c0);
+      };
+      auto t = Time(frame, _frames);
+      std::sort(cpu.begin(), cpu.end());
+      _timing << (ahead ? "multi_ahead " : "multi_seq ") << t.first << " "
+              << t.second << " " << cpu[cpu.size() / 2] << "\n";
+    }
+    for (size_t i = 0; i < sensors.size(); ++i)
+      Write(_dir, names[i], data[i].data(), data[i].size(), 1, 1, _index);
+  }
+
   void Particles(ScenePtr _scene, const std::string &_dir,
       const std::vector<DepthCfg> &_depthCfgs,
       const std::vector<RaysCfg> &_raysCfgs)
@@ -1227,6 +1325,13 @@ int main(int _argc, char **_argv)
   {
     raysCfgs.push_back({"s2l2", {0, 0, 1.2, 0, 0, 0}, 2048, 128,
         -GZ_PI, GZ_PI, -0.3927, 0.3927, 0.3, 8, false});
+  }
+
+  if (std::getenv("PARITY_MULTI"))
+  {
+    Multi(scene, dir, index, timing, frames, depthCfgs, raysCfgs);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
   }
 
   if (std::getenv("PARITY_PARTICLES"))
