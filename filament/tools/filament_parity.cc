@@ -784,13 +784,19 @@ namespace
       shader->SetVertexShader(media + "vertex_shader_330.glsl");
       shader->SetFragmentShader(media + "fragment_shader_330.glsl");
     }
+    VisualPtr box = scene->CreateVisual();
+    box->AddGeometry(scene->CreateBox());
+    box->SetLocalPosition(0, 1, 0);
+    box->SetLocalScale(2, 2, 2);
+    box->SetMaterial(shader);
     // the example's uniforms, u_seed advanced a few frames
     int seed[1] = {3};
     float resolution[2] = {400, 200};
     float color[3] = {1.0f, 0.8f, 0.4f};
     float adjustments[16] = {0, 0, 0, 0.0005f, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0};
-    ShaderParams &p = *shader->FragmentShaderParams();
+    // the visual holds a clone: set the params on it
+    ShaderParams &p = *box->Material()->FragmentShaderParams();
     p["u_seed"].InitializeBuffer(1);
     p["u_seed"].UpdateBuffer(seed);
     p["u_resolution"].InitializeBuffer(2);
@@ -800,14 +806,6 @@ namespace
     p["u_adjustments"].InitializeBuffer(16);
     p["u_adjustments"].UpdateBuffer(adjustments);
 
-    VisualPtr box = scene->CreateVisual();
-    box->AddGeometry(scene->CreateBox());
-    box->SetLocalPosition(0, 1, 0);
-    box->SetLocalScale(2, 2, 2);
-    if (std::string(std::getenv("PARITY_SHADER")) == "plain")
-      box->SetMaterial("Default/TransRed");
-    else
-      box->SetMaterial(shader);
     root->AddChild(box);
 
     CameraPtr cam = scene->CreateCamera();
