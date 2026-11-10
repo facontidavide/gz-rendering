@@ -39,6 +39,9 @@
 // see Markers()
 // PARITY_PROJECTOR=<png>: only a projector of the picture over a floor seen
 // from above, written to projector.png, see ProjectTexture()
+// PARITY_SHADER=1: only the custom_shaders_uniforms box (GLSL on ogre2, its
+// .mat port on filament), shader.png and shader_updated.png (new params);
+// PARITY_SHADER=waves: the Gerstner waves of test/integration/waves.cc
 // PARITY_PROJECTION=1: only custom (off-center intrinsics) and orthographic
 // projections on depth, bbox and RGB cameras, see Projection()
 // PARITY_ACTOR=1: adds two skinned walking actors (test/media/meshes/
@@ -79,6 +82,7 @@
 #include <gz/rendering/Heightmap.hh>
 #include <gz/rendering/Light.hh>
 #include <gz/rendering/Mesh.hh>
+#include <gz/rendering/ShaderParams.hh>
 #include <gz/rendering/Image.hh>
 #include <gz/rendering/LensFlarePass.hh>
 #include <gz/rendering/GpuRays.hh>
@@ -756,6 +760,165 @@ namespace
     png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
         common::Image::RGB_INT8);
     png.SavePNG(_dir + "/projector.png");
+    _engine->DestroyScene(scene);
+  }
+
+  /// \brief PARITY_SHADER=1: shader.png, the custom_shaders_uniforms example
+  /// box: its GLSL 330 shaders on ogre2, its .mat port on filament
+  void CustomShader(RenderEngine *_engine, const std::string &_engineName,
+      const std::string &_dir)
+  {
+    ScenePtr scene = _engine->CreateScene("shader");
+    scene->SetBackgroundColor(0, 0, 0);
+    scene->SetAmbientLight(0.3, 0.3, 0.3);
+    VisualPtr root = scene->RootVisual();
+    const std::string media = std::string(PROJECT_SOURCE_PATH) +
+        "/examples/custom_shaders_uniforms/media/";
+    MaterialPtr shader = scene->CreateMaterial();
+    if (_engineName == "filament")
+    {
+      shader->SetVertexShader(media + "custom_shader.mat");
+      shader->SetFragmentShader(media + "custom_shader.mat");
+    }
+    else
+    {
+      shader->SetVertexShader(media + "vertex_shader_330.glsl");
+      shader->SetFragmentShader(media + "fragment_shader_330.glsl");
+    }
+    VisualPtr box = scene->CreateVisual();
+    box->AddGeometry(scene->CreateBox());
+    box->SetLocalPosition(0, 1, 0);
+    box->SetLocalScale(2, 2, 2);
+    box->SetMaterial(shader);
+    // the example's uniforms, u_seed advanced a few frames
+    int seed[1] = {3};
+    float resolution[2] = {400, 200};
+    float color[3] = {1.0f, 0.8f, 0.4f};
+    // noise scale 0.02 instead of the example's 0.0005: visible grain
+    float adjustments[16] = {0, 0, 0, 0.02f, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0};
+    // the visual holds a clone: set the params on it
+    ShaderParams &p = *box->Material()->FragmentShaderParams();
+    p["u_seed"].InitializeBuffer(1);
+    p["u_seed"].UpdateBuffer(seed);
+    p["u_resolution"].InitializeBuffer(2);
+    p["u_resolution"].UpdateBuffer(resolution);
+    p["u_color"].InitializeBuffer(3);
+    p["u_color"].UpdateBuffer(color);
+    p["u_adjustments"].InitializeBuffer(16);
+    p["u_adjustments"].UpdateBuffer(adjustments);
+    // ogre2 auto-binds this one once named; filament has getClipFromWorld...
+    if (_engineName == "ogre2")
+      (*box->Material()->VertexShaderParams())["worldviewproj_matrix"] = 1;
+
+    root->AddChild(box);
+
+    CameraPtr cam = scene->CreateCamera();
+    cam->SetImageWidth(400);
+    cam->SetImageHeight(300);
+    cam->SetAspectRatio(400.0 / 300.0);
+    cam->SetHFOV(GZ_PI / 2);
+    // the example's first camera pose, facing the box
+    cam->SetLocalPosition(3, 3, 0);
+    cam->SetLocalRotation(0, 0, std::atan2(-2.0, -3.0));
+    root->AddChild(cam);
+    Image img = cam->CreateImage();
+    cam->Capture(img);
+    cam->Capture(img);
+    common::Image png;
+    png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
+        common::Image::RGB_INT8);
+    png.SavePNG(_dir + "/shader.png");
+
+    // params updated between frames, like the example's key handlers
+    seed[0] = 7;
+    color[0] = 0.4f;
+    color[2] = 1.0f;
+    p["u_seed"].UpdateBuffer(seed);
+    p["u_color"].UpdateBuffer(color);
+    cam->Capture(img);
+    png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
+        common::Image::RGB_INT8);
+    png.SavePNG(_dir + "/shader_updated.png");
+    _engine->DestroyScene(scene);
+  }
+
+  /// \brief PARITY_SHADER=waves: waves.png, test/integration/waves.cc's
+  /// Gerstner waves at t = 5 s: GLSL 330 on ogre2, GerstnerWaves.mat on
+  /// filament
+  void Waves(RenderEngine *_engine, const std::string &_engineName,
+      const std::string &_dir)
+  {
+    ScenePtr scene = _engine->CreateScene("waves");
+    scene->SetAmbientLight(0.3, 0.3, 0.3);
+    scene->SetBackgroundColor(1.0, 0.0, 0.0);
+    VisualPtr root = scene->RootVisual();
+    const std::string media = std::string(PROJECT_SOURCE_PATH) +
+        "/test/media/";
+    const std::string programs = media + "materials/programs/";
+    MaterialPtr shader = scene->CreateMaterial();
+    const bool fil = _engineName == "filament";
+    shader->SetVertexShader(programs + (fil ? "GerstnerWaves.mat" :
+        "GerstnerWaves_vs_330.glsl"));
+    shader->SetFragmentShader(programs + (fil ? "GerstnerWaves.mat" :
+        "GerstnerWaves_fs_330.glsl"));
+
+    VisualPtr waves = scene->CreateVisual();
+    MeshDescriptor descriptor;
+    descriptor.meshName = media + "meshes/mesh.dae";
+    descriptor.mesh = common::MeshManager::Instance()->Load(
+        descriptor.meshName);
+    waves->AddGeometry(scene->CreateMesh(descriptor));
+    waves->SetLocalPosition(3, 0, 0);
+    waves->SetMaterial(shader, false);
+    root->AddChild(waves);
+
+    ShaderParams &vs = *shader->VertexShaderParams();
+    if (!fil)
+    {
+      vs["worldviewproj_matrix"] = 1;
+      vs["camera_position_object_space"] = 1;
+    }
+    auto buffer = [](ShaderParams &_p, const std::string &_name,
+        std::vector<float> _v)
+    {
+      _p[_name].InitializeBuffer(static_cast<uint32_t>(_v.size()));
+      _p[_name].UpdateBuffer(_v.data());
+    };
+    vs["Nwaves"] = 3;
+    vs["rescale"] = 0.5f;
+    buffer(vs, "bumpScale", {25.0f, 25.0f});
+    buffer(vs, "bumpSpeed", {0.01f, 0.01f});
+    buffer(vs, "amplitude", {1.8f, 1.2f, 0.9f});
+    buffer(vs, "wavenumber", {0.028f, 0.0896f, 0.0504f});
+    buffer(vs, "omega", {0.5f, 1.7f, 1.0f});
+    buffer(vs, "dir0", {-1.0f, 0.0f});
+    buffer(vs, "dir1", {-0.7f, 0.7f});
+    buffer(vs, "dir2", {0.7f, 0.7f});
+    buffer(vs, "steepness", {1.0f, 1.5f, 0.8f});
+    vs["tau"] = 2.0f;
+    vs["t"] = 5.0f;
+    ShaderParams &fs = *shader->FragmentShaderParams();
+    fs["hdrMultiplier"] = 0.4f;
+    fs["fresnelPower"] = 5.0f;
+    buffer(fs, "shallowColor", {0.0f, 0.1f, 0.3f, 1.0f});
+    buffer(fs, "deepColor", {0.0f, 0.05f, 0.2f, 1.0f});
+    fs["bumpMap"].SetTexture(media + "materials/textures/wave_normals.dds");
+    fs["cubeMap"].SetTexture(media + "materials/textures/skybox_lowres.dds",
+        ShaderParam::ParamType::PARAM_TEXTURE_CUBE, 1u);
+
+    CameraPtr cam = scene->CreateCamera();
+    cam->SetLocalPosition(0, 0.0, 3.5);
+    cam->SetImageWidth(640);
+    cam->SetImageHeight(480);
+    root->AddChild(cam);
+    Image img = cam->CreateImage();
+    cam->Capture(img);
+    cam->Capture(img);
+    common::Image png;
+    png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
+        common::Image::RGB_INT8);
+    png.SavePNG(_dir + "/waves.png");
     _engine->DestroyScene(scene);
   }
 
@@ -1541,6 +1704,16 @@ int main(int _argc, char **_argv)
   if (const char *png = std::getenv("PARITY_PROJECTOR"))
   {
     ProjectTexture(engine, png, dir);
+    std::cout << "wrote " << dir << std::endl;
+    return 0;
+  }
+
+  if (const char *shader = std::getenv("PARITY_SHADER"))
+  {
+    if (std::string(shader) == "waves")
+      Waves(engine, _argv[1], dir);
+    else
+      CustomShader(engine, _argv[1], dir);
     std::cout << "wrote " << dir << std::endl;
     return 0;
   }

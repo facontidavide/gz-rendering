@@ -28,6 +28,10 @@
 #include <filament/SwapChain.h>
 #include <filament/Texture.h>
 #include <backend/PixelBufferDescriptor.h>
+#include <filamat/MaterialBuilder.h>
+#include <filamat/Package.h>
+#include <filament-matp/Config.h>
+#include <filament-matp/MaterialParser.h>
 
 #include <gz/common/Console.hh>
 #include <gz/common/Filesystem.hh>
@@ -206,6 +210,16 @@ filament::Material *FilamentRenderEngine::Material(const std::string &_name)
   if (it != this->dataPtr->materials.end())
     return it->second;
 
+  // A path to a filament material source (Material::SetFragmentShader with
+  // a .mat file): compiled at runtime, cached under its path.
+  if (_name.size() > 4 && _name.compare(_name.size() - 4, 4, ".mat") == 0)
+  {
+    filament::Material *mat = this->CompileMaterial(_name);
+    if (mat)
+      this->dataPtr->materials[_name] = mat;
+    return mat;
+  }
+
   std::string path = common::joinPaths(this->dataPtr->resourcePath,
       "materials", _name + ".filamat");
   std::ifstream in(path, std::ios::binary);
@@ -231,6 +245,134 @@ filament::Material *FilamentRenderEngine::Material(const std::string &_name)
 }
 
 //////////////////////////////////////////////////
+namespace
+{
+/// \brief matc's options for the running backend, all platforms (the GL
+/// backend may run on an OpenGL ES context)
+class RuntimeMatConfig : public matp::Config
+{
+  public: explicit RuntimeMatConfig(filament::backend::Backend _backend)
+  {
+    this->mPlatform = Platform::ALL;
+    // like the build-time matc flags (--optimize-size); the performance
+    // level's GLSL can trip Mesa's compiler (struct constructor members)
+    this->mOptimizationLevel = Optimization::SIZE;
+    this->mTargetApi = _backend == filament::backend::Backend::VULKAN ?
+        TargetApi::VULKAN : TargetApi::OPENGL;
+  }
+  public: Output *getOutput() const noexcept override { return nullptr; }
+  public: Input *getInput() const noexcept override { return nullptr; }
+  public: std::string toString() const noexcept override { return ""; }
+  public: std::string toPIISafeString() const noexcept override
+  { return ""; }
+};
+}
+
+//////////////////////////////////////////////////
+filament::Material *FilamentRenderEngine::CompileMaterial(
+    const std::string &_path)
+{
+  std::ifstream in(_path, std::ios::binary);
+  if (!in)
+  {
+    gzerr << "Unable to open filament material source [" << _path << "]"
+          << std::endl;
+    return nullptr;
+  }
+  std::string text((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+  ssize_t size = static_cast<ssize_t>(text.size());
+  std::unique_ptr<char[]> chars(new char[text.size()]);
+  std::memcpy(chars.get(), text.data(), text.size());
+  std::unique_ptr<const char[]> buffer(chars.release());
+
+  // ponytail: compiles on the render thread (~1 s per material, for the
+  // running backend only), cached per path for the engine's lifetime; an
+  // on-disk .filamat cache if startup time matters. No #include support.
+  auto *engine = this->dataPtr->engine;
+  RuntimeMatConfig config(engine->getBackend());
+  filamat::MaterialBuilder::init();
+  filament::Material *mat = nullptr;
+  {
+    filamat::MaterialBuilder builder;
+    matp::MaterialParser parser;
+    ::utils::Status status = parser.parse(builder, config, size, buffer);
+    if (!status.isOk())
+    {
+      gzerr << "Failed to parse filament material [" << _path << "]: "
+            << status.getMessage() << std::endl;
+    }
+    else
+    {
+      // the engine's job system: the render thread already adopted it
+      filamat::Package package = builder.build(engine->getJobSystem());
+      if (!package.isValid())
+      {
+        gzerr << "Failed to compile filament material [" << _path << "]"
+              << std::endl;
+      }
+      else
+      {
+        mat = filament::Material::Builder()
+            .package(package.getData(), package.getSize())
+            .build(*engine);
+      }
+    }
+  }
+  filamat::MaterialBuilder::shutdown();
+  if (mat)
+    gzmsg << "Compiled filament material [" << _path << "]" << std::endl;
+  return mat;
+}
+
+//////////////////////////////////////////////////
+/// \brief Top mip of an uncompressed 24/32-bit RGB(A) DDS (like waves'
+/// wave_normals.dds), which common::Image can not read. False otherwise.
+static bool LoadUncompressedDds(const std::string &_path, common::Image &_img)
+{
+  if (_path.size() < 4 ||
+      common::lowercase(_path.substr(_path.size() - 4)) != ".dds")
+  {
+    return false;
+  }
+  std::ifstream file(_path, std::ios::binary);
+  std::vector<uint8_t> dds((std::istreambuf_iterator<char>(file)),
+      std::istreambuf_iterator<char>());
+  auto u32 = [&](size_t _o)
+  {
+    return static_cast<uint32_t>(dds[_o] | (dds[_o + 1] << 8u) |
+        (dds[_o + 2] << 16u) | (dds[_o + 3] << 24u));
+  };
+  if (dds.size() < 128u || !std::equal(dds.begin(), dds.begin() + 4, "DDS ")
+      || !(u32(80) & 0x40u) || u32(112) != 0u)
+  {
+    return false;
+  }
+  const uint32_t h = u32(12), w = u32(16), bits = u32(88);
+  const uint32_t bpp = bits / 8u;
+  if ((bpp != 3u && bpp != 4u) || dds.size() < 128u + size_t(w) * h * bpp)
+    return false;
+  // channel byte offsets from the masks (little endian)
+  auto shift = [&](uint32_t _mask)
+  {
+    uint32_t b = 0;
+    while (_mask && !(_mask & 0xffu)) { _mask >>= 8u; ++b; }
+    return b;
+  };
+  const uint32_t r = shift(u32(92)), g = shift(u32(96)), b = shift(u32(100));
+  std::vector<unsigned char> rgb(size_t(w) * h * 3u);
+  for (size_t i = 0; i < size_t(w) * h; ++i)
+  {
+    const uint8_t *px = dds.data() + 128u + i * bpp;
+    rgb[i * 3] = px[r];
+    rgb[i * 3 + 1] = px[g];
+    rgb[i * 3 + 2] = px[b];
+  }
+  _img.SetFromData(rgb.data(), w, h, common::Image::RGB_INT8);
+  return true;
+}
+
+//////////////////////////////////////////////////
 filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
     std::shared_ptr<const common::Image> _data, bool _srgb)
 {
@@ -247,7 +389,7 @@ filament::Texture *FilamentRenderEngine::Texture(const std::string &_path,
     const unsigned char white[4] = {255, 255, 255, 255};
     img.SetFromData(white, 1, 1, common::Image::RGBA_INT8);
   }
-  else if (!_data)
+  else if (!_data && !LoadUncompressedDds(_path, img))
   {
     img.Load(_path);
   }

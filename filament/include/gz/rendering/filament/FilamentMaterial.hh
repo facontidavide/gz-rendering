@@ -183,6 +183,25 @@ namespace gz
       // documentation inherited
       public: virtual enum MaterialType Type() const override;
 
+      // documentation inherited
+      public: virtual std::string VertexShader() const override;
+
+      // documentation inherited
+      public: virtual ShaderParamsPtr VertexShaderParams() override;
+
+      // documentation inherited
+      public: virtual void SetVertexShader(const std::string &_path) override;
+
+      // documentation inherited
+      public: virtual std::string FragmentShader() const override;
+
+      // documentation inherited
+      public: virtual ShaderParamsPtr FragmentShaderParams() override;
+
+      // documentation inherited
+      public: virtual void SetFragmentShader(const std::string &_path)
+          override;
+
       /// \brief Alpha of the drawn color: (1 - transparency) * diffuse alpha
       public: double Opacity() const;
 
@@ -199,6 +218,28 @@ namespace gz
       protected: virtual void Init() override;
 
       protected: void Update(filament::MaterialInstance *_instance);
+
+      /// \brief Rebind meshes using _instance to a default one, destroy it
+      protected: void DestroyInstance(filament::MaterialInstance *_instance);
+
+      /// \brief Create, switch or drop the custom shader instance, push the
+      /// shader params to it
+      protected: void UpdateCustomShader();
+
+      /// \brief Instance of the filament material compiled from the .mat
+      /// shader source, nullptr without one. Takes over from the others.
+      protected: filament::MaterialInstance *custom{nullptr};
+
+      /// \brief .mat source of the custom instance
+      protected: std::string customSource;
+
+      protected: std::string vertexShaderPath;
+
+      protected: std::string fragmentShaderPath;
+
+      protected: ShaderParamsPtr vertexShaderParams;
+
+      protected: ShaderParamsPtr fragmentShaderParams;
 
       protected: filament::MaterialInstance *lit{nullptr};
 

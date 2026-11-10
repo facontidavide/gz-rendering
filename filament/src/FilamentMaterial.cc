@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <vector>
 
 #include <filament/Engine.h>
 #include <filament/Material.h>
@@ -26,7 +27,9 @@
 #include <filament/TextureSampler.h>
 
 #include <gz/common/Console.hh>
+#include <gz/common/StringUtils.hh>
 
+#include "gz/rendering/ShaderParams.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
 #include "gz/rendering/filament/FilamentMaterial.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
@@ -38,6 +41,8 @@ using namespace rendering;
 
 //////////////////////////////////////////////////
 FilamentMaterial::FilamentMaterial()
+  : vertexShaderParams(std::make_shared<ShaderParams>()),
+    fragmentShaderParams(std::make_shared<ShaderParams>())
 {
 }
 
@@ -50,35 +55,35 @@ FilamentMaterial::~FilamentMaterial()
 void FilamentMaterial::Destroy()
 {
   BaseMaterial::Destroy();
+  for (auto *mi : {this->lit, this->unlit, this->unlitTransparent,
+      this->custom})
+  {
+    this->DestroyInstance(mi);
+  }
+  this->lit = nullptr;
+  this->unlit = nullptr;
+  this->unlitTransparent = nullptr;
+  this->custom = nullptr;
+  this->customSource.clear();
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::DestroyInstance(filament::MaterialInstance *_instance)
+{
   auto *engine = FilamentRenderEngine::Instance()->FilamentEngine();
+  if (!_instance || !engine)
+    return;
   // filament refuses to destroy an instance a renderable still uses
   // ponytail: scans every mesh of the scene, a per-material user list if
   // destroying materials of big scenes ever shows up in profiles
   filament::Material *fallback =
       FilamentRenderEngine::Instance()->Material("gz_unlit");
-  if (engine && fallback && this->scene)
+  if (fallback && this->scene)
   {
     for (FilamentMesh *mesh : this->scene->Meshes())
-    {
-      for (auto *mi : {this->lit, this->unlit, this->unlitTransparent})
-      {
-        if (mi)
-          mesh->ReplaceInstance(mi, fallback->getDefaultInstance());
-      }
-    }
+      mesh->ReplaceInstance(_instance, fallback->getDefaultInstance());
   }
-  if (engine)
-  {
-    if (this->lit)
-      engine->destroy(this->lit);
-    if (this->unlit)
-      engine->destroy(this->unlit);
-    if (this->unlitTransparent)
-      engine->destroy(this->unlitTransparent);
-  }
-  this->lit = nullptr;
-  this->unlit = nullptr;
-  this->unlitTransparent = nullptr;
+  engine->destroy(_instance);
 }
 
 //////////////////////////////////////////////////
@@ -130,6 +135,8 @@ double FilamentMaterial::Opacity() const
 //////////////////////////////////////////////////
 filament::MaterialInstance *FilamentMaterial::Instance() const
 {
+  if (this->custom)
+    return this->custom;
   if (this->LightingEnabled())
     return this->lit;
   // like Ogre2Material::UpdateTransparency
@@ -164,6 +171,7 @@ void FilamentMaterial::PreRender()
   BaseMaterial::PreRender();
   if (!this->lit || !this->unlit || !this->unlitTransparent)
     return;
+  this->UpdateCustomShader();
 
   if (this->HasTexture() && this->Texture() != this->loadedTexture)
   {
@@ -528,5 +536,215 @@ void FilamentMaterial::Update(filament::MaterialInstance *_instance)
         filament::math::float3{1.0f, 1.0f, 1.0f};
     _instance->setParameter("emissive", emissive);
     _instance->setParameter("emissiveMapTint", mapTint);
+  }
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::VertexShader() const
+{
+  return this->vertexShaderPath;
+}
+
+//////////////////////////////////////////////////
+ShaderParamsPtr FilamentMaterial::VertexShaderParams()
+{
+  return this->vertexShaderParams;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetVertexShader(const std::string &_path)
+{
+  this->vertexShaderPath = _path;
+}
+
+//////////////////////////////////////////////////
+std::string FilamentMaterial::FragmentShader() const
+{
+  return this->fragmentShaderPath;
+}
+
+//////////////////////////////////////////////////
+ShaderParamsPtr FilamentMaterial::FragmentShaderParams()
+{
+  return this->fragmentShaderParams;
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::SetFragmentShader(const std::string &_path)
+{
+  this->fragmentShaderPath = _path;
+}
+
+//////////////////////////////////////////////////
+/// \brief Set a filament uniform from a gz float or int shader param buffer,
+/// by the uniform's declared type. Returns false on a type mismatch.
+template <typename S>
+static bool SetUniform(filament::MaterialInstance *_mi,
+    const filament::Material::ParameterInfo &_info, const S *_v, uint32_t _n)
+{
+  namespace fm = filament::math;
+  using T = filament::backend::UniformType;
+  const char *name = _info.name;
+  // the array setter covers scalars too, count clamped to the declaration
+  auto set = [&](auto *_typed, uint32_t _width)
+  {
+    const uint32_t count = std::min(_n / _width, _info.count);
+    if (count > 0)
+      _mi->setParameter(name, _typed, count);
+    return count > 0;
+  };
+  if constexpr (std::is_same_v<S, float>)
+  {
+    switch (_info.type)
+    {
+      case T::FLOAT: return set(_v, 1);
+      case T::FLOAT2: return set(reinterpret_cast<const fm::float2 *>(_v), 2);
+      case T::FLOAT3: return set(reinterpret_cast<const fm::float3 *>(_v), 3);
+      case T::FLOAT4: return set(reinterpret_cast<const fm::float4 *>(_v), 4);
+      case T::MAT4: return set(reinterpret_cast<const fm::mat4f *>(_v), 16);
+      default: return false;
+    }
+  }
+  else
+  {
+    switch (_info.type)
+    {
+      case T::INT: return set(_v, 1);
+      case T::INT2: return set(reinterpret_cast<const fm::int2 *>(_v), 2);
+      case T::INT3: return set(reinterpret_cast<const fm::int3 *>(_v), 3);
+      case T::INT4: return set(reinterpret_cast<const fm::int4 *>(_v), 4);
+      default: return false;
+    }
+  }
+}
+
+//////////////////////////////////////////////////
+void FilamentMaterial::UpdateCustomShader()
+{
+  // Filament takes material definitions, not GLSL: a .mat source given as
+  // the fragment (or vertex) shader is compiled into a filament material.
+  auto isMat = [](const std::string &_p)
+  { return common::EndsWith(_p, ".mat"); };
+  std::string source = isMat(this->fragmentShaderPath) ?
+      this->fragmentShaderPath :
+      (isMat(this->vertexShaderPath) ? this->vertexShaderPath : "");
+  if (source.empty() &&
+      (!this->fragmentShaderPath.empty() || !this->vertexShaderPath.empty()))
+  {
+    static bool warned = false;
+    if (!warned)
+    {
+      gzwarn << "Filament does not take GLSL shaders ["
+             << this->fragmentShaderPath << "]: give a filament material "
+             << "source (.mat) instead. Drawing the regular material."
+             << std::endl;
+      warned = true;
+    }
+  }
+
+  auto *engine = FilamentRenderEngine::Instance();
+  bool fresh = false;
+  if (source != this->customSource)
+  {
+    this->DestroyInstance(this->custom);
+    this->custom = nullptr;
+    this->customSource = source;
+    filament::Material *mat = source.empty() ? nullptr :
+        engine->Material(source);
+    if (mat)
+      this->custom = mat->createInstance();
+    fresh = true;
+  }
+  if (!this->custom)
+    return;
+
+  const filament::Material *mat = this->custom->getMaterial();
+  std::vector<filament::Material::ParameterInfo> infos(
+      mat->getParameterCount());
+  mat->getParameters(infos.data(), infos.size());
+  filament::TextureSampler sampler(
+      filament::TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
+      filament::TextureSampler::MagFilter::LINEAR,
+      filament::TextureSampler::WrapMode::REPEAT);
+  if (fresh)
+  {
+    // filament wants every sampler bound: white 2D, black cube until set
+    for (const auto &info : infos)
+    {
+      if (!info.isSampler)
+        continue;
+      filament::Texture *def =
+          info.samplerType == filament::backend::SamplerType::SAMPLER_CUBEMAP ?
+          engine->CubeTexture("") : engine->Texture("");
+      this->custom->setParameter(info.name, def, sampler);
+    }
+  }
+  for (const ShaderParamsPtr &params :
+      {this->vertexShaderParams, this->fragmentShaderParams})
+  {
+    // like ogre2: only push what changed since the last frame
+    if (!fresh && !params->IsDirty())
+      continue;
+    for (const auto &kv : *params)
+    {
+      const std::string &name = kv.first;
+      const ShaderParam &param = kv.second;
+      auto info = std::find_if(infos.begin(), infos.end(),
+          [&](const filament::Material::ParameterInfo &_i)
+          { return name == _i.name; });
+      if (info == infos.end())
+        continue;
+      bool ok = false;
+      if (info->isSampler)
+      {
+        // linear texels, wrapped, like ogre2's shader param textures
+        // (ShaderParam::Value(string, uvSet) always returns false)
+        std::string path;
+        uint32_t uvSet = 0;
+        param.Value(path, uvSet);
+        filament::Texture *tex = nullptr;
+        if (param.Type() == ShaderParam::PARAM_TEXTURE)
+          tex = engine->Texture(path, nullptr, false);
+        else if (param.Type() == ShaderParam::PARAM_TEXTURE_CUBE)
+          tex = engine->CubeTexture(path, false);
+        if (tex)
+        {
+          this->custom->setParameter(info->name, tex, sampler);
+          ok = true;
+        }
+      }
+      else
+      {
+        float f = 0.0f;
+        int i = 0;
+        std::shared_ptr<void> buf;
+        switch (param.Type())
+        {
+          case ShaderParam::PARAM_FLOAT:
+            ok = param.Value(&f) && SetUniform(this->custom, *info, &f, 1u);
+            break;
+          case ShaderParam::PARAM_INT:
+            ok = param.Value(&i) && SetUniform(this->custom, *info, &i, 1u);
+            break;
+          case ShaderParam::PARAM_FLOAT_BUFFER:
+            ok = param.Buffer(buf) && SetUniform(this->custom, *info,
+                static_cast<const float *>(buf.get()), param.Count());
+            break;
+          case ShaderParam::PARAM_INT_BUFFER:
+            ok = param.Buffer(buf) && SetUniform(this->custom, *info,
+                static_cast<const int *>(buf.get()), param.Count());
+            break;
+          default:
+            break;
+        }
+      }
+      if (!ok)
+      {
+        gzwarn << "Shader param [" << name << "] could not be set: type "
+               << "mismatch with [" << this->customSource << "] or texture "
+               << "not loaded" << std::endl;
+      }
+    }
+    params->ClearDirty();
   }
 }

@@ -97,8 +97,12 @@ namespace gz
       public: bool InFrame() const;
 
       /// \brief Get (and lazily load) a compiled material package by name,
-      /// e.g. "gz_lit", looked up under the engine resource path.
+      /// e.g. "gz_lit", looked up under the engine resource path. A path
+      /// ending in ".mat" is a material source, compiled at runtime.
       public: filament::Material *Material(const std::string &_name);
+
+      /// \brief Compile a filament material source (.mat) with filamat
+      private: filament::Material *CompileMaterial(const std::string &_path);
 
       /// \brief Cached texture by name. Loaded from _data when given, else
       /// from the file _path; an empty name gives a 1x1 white texture.
