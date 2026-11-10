@@ -40,7 +40,7 @@
 // PARITY_PROJECTOR=<png>: only a projector of the picture over a floor seen
 // from above, written to projector.png, see ProjectTexture()
 // PARITY_SHADER=1: only the custom_shaders_uniforms box (GLSL on ogre2, its
-// .mat port on filament), shader.png
+// .mat port on filament), shader.png and shader_updated.png (new params)
 // PARITY_PROJECTION=1: only custom (off-center intrinsics) and orthographic
 // projections on depth, bbox and RGB cameras, see Projection()
 // PARITY_ACTOR=1: adds two skinned walking actors (test/media/meshes/
@@ -793,7 +793,8 @@ namespace
     int seed[1] = {3};
     float resolution[2] = {400, 200};
     float color[3] = {1.0f, 0.8f, 0.4f};
-    float adjustments[16] = {0, 0, 0, 0.0005f, 0, 0, 0, 0, 0, 0, 0, 0,
+    // noise scale 0.02 instead of the example's 0.0005: visible grain
+    float adjustments[16] = {0, 0, 0, 0.02f, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0};
     // the visual holds a clone: set the params on it
     ShaderParams &p = *box->Material()->FragmentShaderParams();
@@ -827,6 +828,17 @@ namespace
     png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
         common::Image::RGB_INT8);
     png.SavePNG(_dir + "/shader.png");
+
+    // params updated between frames, like the example's key handlers
+    seed[0] = 7;
+    color[0] = 0.4f;
+    color[2] = 1.0f;
+    p["u_seed"].UpdateBuffer(seed);
+    p["u_color"].UpdateBuffer(color);
+    cam->Capture(img);
+    png.SetFromData(img.Data<unsigned char>(), img.Width(), img.Height(),
+        common::Image::RGB_INT8);
+    png.SavePNG(_dir + "/shader_updated.png");
     _engine->DestroyScene(scene);
   }
 
