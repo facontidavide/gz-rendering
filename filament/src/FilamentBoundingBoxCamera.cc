@@ -43,6 +43,7 @@
 #include "gz/rendering/Utils.hh"
 #include "gz/rendering/filament/FilamentBoundingBoxCamera.hh"
 #include "gz/rendering/filament/FilamentConversions.hh"
+#include "gz/rendering/filament/FilamentDynamicMesh.hh"
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
@@ -355,7 +356,14 @@ void FilamentBoundingBoxCamera::Render()
       label = static_cast<uint32_t>(*labelPtr) & 0xffu;
     const uint32_t key = ((i % 256u) << 16) | ((i / 256u) << 8) | label;
     if (filament::MaterialInstance *mi = this->FlatInstance(key))
+    {
       this->items[i].mesh->OverrideMaterial(mi);
+      // ogre2's bounding box camera sees no marker points (measured with
+      // filament_parity PARITY_MARKERS=1), unlike the other sensors
+      if (auto *dyn = dynamic_cast<FilamentDynamicMesh *>(
+          this->items[i].mesh))
+        dyn->UseDots(false);
+    }
   }
 
   this->renderTexture->Render(this->view);

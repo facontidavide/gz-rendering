@@ -58,10 +58,11 @@ namespace gz
       public: virtual void PreRender() override;
 
       /// \brief Temporarily render every submesh with _instance
-      public: void OverrideMaterial(filament::MaterialInstance *_instance);
+      public: virtual void OverrideMaterial(
+          filament::MaterialInstance *_instance);
 
       /// \brief Temporarily render submesh _index with _instance
-      public: void OverrideMaterial(unsigned int _index,
+      public: virtual void OverrideMaterial(unsigned int _index,
                   filament::MaterialInstance *_instance);
 
       /// \brief Undo OverrideMaterial

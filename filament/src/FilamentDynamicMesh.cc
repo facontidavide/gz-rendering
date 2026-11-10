@@ -119,8 +119,11 @@ void FilamentDynamicMesh::Release()
     engine->destroy(this->vb);
   if (this->ib)
     engine->destroy(this->ib);
+  if (this->dotIb)
+    engine->destroy(this->dotIb);
   this->vb = nullptr;
   this->ib = nullptr;
+  this->dotIb = nullptr;
 }
 
 //////////////////////////////////////////////////
@@ -273,9 +276,41 @@ void FilamentDynamicMesh::SetLayers(uint8_t _layers)
 }
 
 //////////////////////////////////////////////////
+void FilamentDynamicMesh::OverrideMaterial(
+    filament::MaterialInstance *_instance)
+{
+  FilamentMesh::OverrideMaterial(_instance);
+  this->UseDots(true);
+}
+
+//////////////////////////////////////////////////
+void FilamentDynamicMesh::OverrideMaterial(unsigned int _index,
+    filament::MaterialInstance *_instance)
+{
+  FilamentMesh::OverrideMaterial(_index, _instance);
+  this->UseDots(true);
+}
+
+//////////////////////////////////////////////////
 void FilamentDynamicMesh::RestoreMaterials()
 {
+  this->UseDots(false);
   this->ApplyMaterial();
+}
+
+//////////////////////////////////////////////////
+void FilamentDynamicMesh::UseDots(bool _dots)
+{
+  if (!this->dotIb || this->entity.isNull())
+    return;
+  auto &rm = Engine()->getRenderableManager();
+  if (!rm.hasComponent(this->entity))
+    return;
+  using PT = filament::RenderableManager::PrimitiveType;
+  rm.setGeometryAt(rm.getInstance(this->entity), 0,
+      _dots ? PT::POINTS : PT::TRIANGLES, this->vb,
+      _dots ? this->dotIb : this->ib, 0,
+      _dots ? this->indexCount / 6u : this->indexCount);  // 6 per square
 }
 
 //////////////////////////////////////////////////
@@ -436,6 +471,20 @@ void FilamentDynamicMesh::Update()
       .build(*engine);
   this->ib->setBuffer(*engine, filament::IndexBuffer::BufferDescriptor(
       indices, idx.size() * sizeof(uint32_t), &FreeArray<uint32_t>));
+  this->indexCount = idx.size();
+  if (points)
+  {
+    // the first corner of each square sits on the point
+    auto *dots = new uint32_t[n];
+    for (uint32_t i = 0; i < n; ++i)
+      dots[i] = 4u * i;
+    this->dotIb = filament::IndexBuffer::Builder()
+        .indexCount(static_cast<uint32_t>(n))
+        .bufferType(filament::IndexBuffer::IndexType::UINT)
+        .build(*engine);
+    this->dotIb->setBuffer(*engine, filament::IndexBuffer::BufferDescriptor(
+        dots, n * sizeof(uint32_t), &FreeArray<uint32_t>));
+  }
 
   // keep a flat box from culling away
   const filament::math::float3 pad{1e-3f};
