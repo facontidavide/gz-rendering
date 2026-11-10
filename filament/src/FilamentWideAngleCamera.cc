@@ -355,7 +355,9 @@ void FilamentWideAngleCamera::PostRender()
 void FilamentWideAngleCamera::Copy(Image &_image) const
 {
   const PixelFormat format = _image.Format();
-  if (format != PF_L8 && format != PF_L16)
+  // L8 renders natively into linear R8 (FilamentRenderTarget, like ogre2),
+  // so the stitch pass already writes the sRGB-decoded red channel
+  if (format != PF_L16)
   {
     this->renderTexture->Copy(_image);
     return;
@@ -366,11 +368,11 @@ void FilamentWideAngleCamera::Copy(Image &_image) const
     gzerr << "Invalid image dimensions" << std::endl;
     return;
   }
-  // ogre2 reads its sRGB RGBA8 image back into R8 / R16 unorm with
+  // ogre2 reads its sRGB RGBA8 image back into R16 unorm with
   // Ogre::PixelFormatGpuUtils::bulkPixelConversion: red, sRGB decoded
   Image rgb(_image.Width(), _image.Height(), PF_R8G8B8);
   this->renderTexture->Copy(rgb);
-  const float maxVal = format == PF_L8 ? 255.0f : 65535.0f;
+  const float maxVal = 65535.0f;
   uint16_t lut[256];
   for (int i = 0; i < 256; ++i)
   {
@@ -381,18 +383,9 @@ void FilamentWideAngleCamera::Copy(Image &_image) const
   }
   const unsigned char *src = rgb.Data<unsigned char>();
   const size_t count = static_cast<size_t>(_image.Width()) * _image.Height();
-  if (format == PF_L8)
-  {
-    unsigned char *dst = _image.Data<unsigned char>();
-    for (size_t i = 0; i < count; ++i)
-      dst[i] = static_cast<unsigned char>(lut[src[i * 3u]]);
-  }
-  else
-  {
-    uint16_t *dst = _image.Data<uint16_t>();
-    for (size_t i = 0; i < count; ++i)
-      dst[i] = lut[src[i * 3u]];
-  }
+  uint16_t *dst = _image.Data<uint16_t>();
+  for (size_t i = 0; i < count; ++i)
+    dst[i] = lut[src[i * 3u]];
 }
 
 //////////////////////////////////////////////////
