@@ -40,6 +40,7 @@ namespace gz
     inline namespace GZ_RENDERING_VERSION_NAMESPACE {
     //
     class FilamentDynamicMesh;
+    class FilamentProjector;
 
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentScene :
       public BaseScene
@@ -105,6 +106,16 @@ namespace gz
       /// \brief Remove an emitter from ParticleEmitters()
       public: void UnregisterParticleEmitter(
           FilamentParticleEmitter *_emitter);
+
+      /// \brief Projectors of this scene
+      public: const std::set<FilamentProjector *> &Projectors() const;
+
+      public: void RegisterProjector(FilamentProjector *_projector);
+
+      public: void UnregisterProjector(FilamentProjector *_projector);
+
+      protected: virtual ProjectorPtr CreateProjectorImpl(unsigned int _id,
+                     const std::string &_name) override;
 
       protected: virtual DirectionalLightPtr CreateDirectionalLightImpl(
                      unsigned int _id, const std::string &_name) override;
@@ -268,6 +279,8 @@ namespace gz
       protected: std::set<FilamentMesh *> meshes;
 
       protected: std::vector<FilamentParticleEmitter *> particleEmitters;
+
+      protected: std::set<FilamentProjector *> projectors;
 
       private: friend class FilamentRenderEngine;
       private: friend class FilamentMesh;

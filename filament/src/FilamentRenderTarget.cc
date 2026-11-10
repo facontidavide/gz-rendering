@@ -33,6 +33,7 @@
 #include "gz/rendering/PixelFormat.hh"
 #include "gz/rendering/filament/FilamentGaussianNoisePass.hh"
 #include "gz/rendering/filament/FilamentLensFlarePass.hh"
+#include "gz/rendering/filament/FilamentProjector.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/Utils.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
@@ -82,6 +83,9 @@ void FilamentRenderTarget::DestroyTarget()
     if (t)
       engine->destroy(t);
   }
+  for (auto &[texture, t] : this->colorTargets)
+    engine->destroy(t);
+  this->colorTargets.clear();
   this->target = nullptr;
   this->colorTexture = nullptr;
   this->depthTexture = nullptr;
@@ -137,7 +141,9 @@ void FilamentRenderTarget::BuildAttachments(filament::RenderTarget *&_target,
   _depth = filament::Texture::Builder()
       .width(this->width).height(this->height).levels(1)
       .format(filament::Texture::InternalFormat::DEPTH32F)
-      .usage(filament::Texture::Usage::DEPTH_ATTACHMENT)
+      // sampled by the projectors
+      .usage(filament::Texture::Usage::DEPTH_ATTACHMENT |
+             filament::Texture::Usage::SAMPLEABLE)
       .build(*engine);
   _target = filament::RenderTarget::Builder()
       .texture(filament::RenderTarget::AttachmentPoint::COLOR, _color)
@@ -177,6 +183,43 @@ void FilamentRenderTarget::ApplyRenderPasses(
     std::swap(this->colorTexture, this->scratchColor);
     std::swap(this->depthTexture, this->scratchDepth);
     this->Render(view);
+  }
+}
+
+//////////////////////////////////////////////////
+void FilamentRenderTarget::ApplyProjectors(
+    const std::set<FilamentProjector *> &_projectors,
+    const filament::math::mat4f &_invViewProj, uint32_t _visibilityMask)
+{
+  if (!this->target)
+    return;
+  filament::RenderTarget *colorOnly = nullptr;
+  for (FilamentProjector *projector : _projectors)
+  {
+    if (!projector->VisibleTo(_visibilityMask))
+      continue;
+    filament::View *view = projector->DecalView(_invViewProj,
+        this->depthTexture);
+    if (!view)
+      continue;
+    if (!colorOnly)
+    {
+      auto it = this->colorTargets.find(this->colorTexture);
+      if (it == this->colorTargets.end())
+      {
+        it = this->colorTargets.emplace(this->colorTexture,
+            filament::RenderTarget::Builder()
+                .texture(filament::RenderTarget::AttachmentPoint::COLOR,
+                    this->colorTexture)
+                .build(*Engine())).first;
+      }
+      colorOnly = it->second;
+    }
+    // blend over the scene: no clear, the depth is only sampled
+    filament::RenderTarget *scene = this->target;
+    this->target = colorOnly;
+    this->Render(view, nullptr, false);
+    this->target = scene;
   }
 }
 

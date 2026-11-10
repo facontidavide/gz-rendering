@@ -47,6 +47,7 @@
 #include "gz/rendering/filament/FilamentMesh.hh"
 #include "gz/rendering/filament/FilamentMeshFactory.hh"
 #include "gz/rendering/filament/FilamentParticleEmitter.hh"
+#include "gz/rendering/filament/FilamentProjector.hh"
 #include "gz/rendering/filament/FilamentRayQuery.hh"
 #include "gz/rendering/filament/FilamentRenderEngine.hh"
 #include "gz/rendering/filament/FilamentRenderTarget.hh"
@@ -301,6 +302,33 @@ void FilamentScene::UnregisterParticleEmitter(
 {
   auto &v = this->particleEmitters;
   v.erase(std::remove(v.begin(), v.end(), _emitter), v.end());
+}
+
+//////////////////////////////////////////////////
+const std::set<FilamentProjector *> &FilamentScene::Projectors() const
+{
+  return this->projectors;
+}
+
+//////////////////////////////////////////////////
+void FilamentScene::RegisterProjector(FilamentProjector *_projector)
+{
+  this->projectors.insert(_projector);
+}
+
+//////////////////////////////////////////////////
+void FilamentScene::UnregisterProjector(FilamentProjector *_projector)
+{
+  this->projectors.erase(_projector);
+}
+
+//////////////////////////////////////////////////
+ProjectorPtr FilamentScene::CreateProjectorImpl(unsigned int _id,
+    const std::string &_name)
+{
+  auto object = std::shared_ptr<FilamentProjector>(new FilamentProjector);
+  bool result = this->InitObject(object, _id, _name);
+  return (result) ? object : nullptr;
 }
 
 //////////////////////////////////////////////////
