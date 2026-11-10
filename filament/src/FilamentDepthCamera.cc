@@ -22,6 +22,9 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 #include <backend/PixelBufferDescriptor.h>
 #include <filament/Camera.h>
@@ -330,19 +333,65 @@ void FilamentDepthCamera::PostRender()
   const double farSq = FarRangeSq(farClip - tol);
 
   // Fast path without particles: the same clamping and packing as the loop
-  // below, with no per pixel divisions or square roots and no branches, so
-  // the compiler can vectorise it.
+  // below, with no per pixel divisions or square roots.
   auto convert = [&](auto _cloud)
   {
     constexpr bool cloud = decltype(_cloud)::value;
     const double nearT = nearClip + tol;
+#if defined(__SSE2__)
+    // the least float >= nearT: for a float f, f < nearT <=> f < nearF
+    float nearFl = static_cast<float>(nearT);
+    if (static_cast<double>(nearFl) < nearT)
+      nearFl = std::nextafter(nearFl, maxVal);
+    const __m128 nearF = _mm_set1_ps(nearFl);
+    const __m128d farSqD = _mm_set1_pd(farSq);
+    const __m128 absF = _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff));
+    const __m128 maxF = _mm_set1_ps(maxVal);
+    const __m128 minF = _mm_set1_ps(minVal);
+#endif
     float *depthOut = this->depthImage.data();
     float *cloudOut = this->pointCloud.data();
     for (unsigned int v = 0; v < height; ++v)
     {
       const double kb = rowK[v];
       const size_t row = static_cast<size_t>(v) * width;
-      for (unsigned int u = 0; u < width; ++u)
+      unsigned int u = 0;
+#if defined(__SSE2__)
+      // depth only, four pixels per step: the same double operations as the
+      // scalar loop, two lanes at a time; the unclamped output is the input
+      // float itself, like the scalar loop's float -> double -> float
+      if constexpr (!cloud)
+      {
+        const __m128d kbD = _mm_set1_pd(kb);
+        for (; u + 4u <= width; u += 4u)
+        {
+          const size_t i = row + u;
+          const __m128 f = _mm_loadu_ps(src + i);
+          const __m128d d0 = _mm_cvtps_pd(f);
+          const __m128d d1 = _mm_cvtps_pd(_mm_movehl_ps(f, f));
+          const __m128d q0 = _mm_mul_pd(_mm_loadu_pd(&colK[u]), d0);
+          const __m128d q1 = _mm_mul_pd(_mm_loadu_pd(&colK[u + 2u]), d1);
+          const __m128d r0 = _mm_mul_pd(kbD, d0);
+          const __m128d r1 = _mm_mul_pd(kbD, d1);
+          // (d * d + p1 * p1) + p2 * p2 > farSq
+          const __m128d s0 = _mm_add_pd(_mm_add_pd(_mm_mul_pd(d0, d0),
+              _mm_mul_pd(q0, q0)), _mm_mul_pd(r0, r0));
+          const __m128d s1 = _mm_add_pd(_mm_add_pd(_mm_mul_pd(d1, d1),
+              _mm_mul_pd(q1, q1)), _mm_mul_pd(r1, r1));
+          const __m128 beyond = _mm_shuffle_ps(
+              _mm_castpd_ps(_mm_cmpgt_pd(s0, farSqD)),
+              _mm_castpd_ps(_mm_cmpgt_pd(s1, farSqD)), _MM_SHUFFLE(2, 0, 2, 0));
+          const __m128 far = _mm_or_ps(beyond,
+              _mm_cmpeq_ps(_mm_and_ps(f, absF), maxF));
+          const __m128 clamped = _mm_or_ps(far, _mm_cmplt_ps(f, nearF));
+          const __m128 c = _mm_or_ps(_mm_and_ps(far, maxF),
+              _mm_andnot_ps(far, minF));
+          _mm_storeu_ps(depthOut + i, _mm_or_ps(_mm_and_ps(clamped, c),
+              _mm_andnot_ps(clamped, f)));
+        }
+      }
+#endif
+      for (; u < width; ++u)
       {
         const size_t i = row + u;
         const double d = src[i];
