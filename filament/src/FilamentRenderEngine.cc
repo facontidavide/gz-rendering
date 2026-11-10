@@ -25,6 +25,7 @@
 #include <filament/Engine.h>
 #include <filament/Material.h>
 #include <filament/Renderer.h>
+#include <filament/SwapChain.h>
 #include <filament/Texture.h>
 #include <backend/PixelBufferDescriptor.h>
 
@@ -50,6 +51,9 @@ namespace gz
     {
       public: filament::Engine *engine{nullptr};
       public: filament::Renderer *renderer{nullptr};
+      /// \brief 1x1 headless swap chain for BeginFrame/EndFrame, lazy
+      public: filament::SwapChain *headless{nullptr};
+      public: bool inFrame{false};
       public: FilamentSceneStorePtr scenes;
       public: std::map<std::string, filament::Material *> materials;
       public: std::map<std::string, filament::Texture *> textures;
@@ -116,6 +120,9 @@ void FilamentRenderEngine::Destroy()
     for (auto &it : this->dataPtr->materials)
       this->dataPtr->engine->destroy(it.second);
     this->dataPtr->materials.clear();
+    if (this->dataPtr->headless)
+      this->dataPtr->engine->destroy(this->dataPtr->headless);
+    this->dataPtr->headless = nullptr;
     if (this->dataPtr->renderer)
       this->dataPtr->engine->destroy(this->dataPtr->renderer);
     this->dataPtr->renderer = nullptr;
@@ -153,6 +160,37 @@ filament::Engine *FilamentRenderEngine::FilamentEngine() const
 filament::Renderer *FilamentRenderEngine::Renderer() const
 {
   return this->dataPtr->renderer;
+}
+
+//////////////////////////////////////////////////
+void FilamentRenderEngine::BeginFrame()
+{
+  if (this->dataPtr->inFrame)
+    return;
+  if (!this->dataPtr->headless)
+  {
+    this->dataPtr->headless =
+        this->dataPtr->engine->createSwapChain(1, 1, 0);
+  }
+  // the frame skipper may ask to skip; rendering anyway is allowed and the
+  // first render() then does the deferred frame setup
+  this->dataPtr->renderer->beginFrame(this->dataPtr->headless);
+  this->dataPtr->inFrame = true;
+}
+
+//////////////////////////////////////////////////
+void FilamentRenderEngine::EndFrame()
+{
+  if (!this->dataPtr->inFrame)
+    return;
+  this->dataPtr->renderer->endFrame();
+  this->dataPtr->inFrame = false;
+}
+
+//////////////////////////////////////////////////
+bool FilamentRenderEngine::InFrame() const
+{
+  return this->dataPtr->inFrame;
 }
 
 //////////////////////////////////////////////////

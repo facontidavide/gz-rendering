@@ -42,7 +42,9 @@ namespace gz
     inline namespace GZ_RENDERING_VERSION_NAMESPACE {
     //
     /// \brief Offscreen color+depth attachment pair. Rendering goes through
-    /// Renderer::renderStandaloneView, readback through readPixels.
+    /// Renderer::renderStandaloneView (Renderer::render inside
+    /// FilamentRenderEngine::BeginFrame/EndFrame), readback through
+    /// readPixels.
     class GZ_RENDERING_FILAMENT_VISIBLE FilamentRenderTarget :
       public virtual BaseRenderTarget<FilamentObject>
     {
@@ -54,7 +56,9 @@ namespace gz
 
       public: virtual void Copy(Image &_image) const override;
 
-      /// \brief Render _view into this target (synchronously submits)
+      /// \brief Render _view into this target: a standalone frame (its own
+      /// submit), or a pass of the frame opened by
+      /// FilamentRenderEngine::BeginFrame
       /// \param[in] _viewport Region to draw into; nullptr: whole target
       /// \param[in] _clear Clear the color attachment first (the whole
       /// attachment, on every backend); false keeps what is there
