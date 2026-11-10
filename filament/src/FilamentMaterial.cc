@@ -60,7 +60,7 @@ void FilamentMaterial::Destroy()
   {
     for (FilamentMesh *mesh : this->scene->Meshes())
     {
-      for (auto *mi : {this->lit, this->unlit})
+      for (auto *mi : {this->lit, this->unlit, this->unlitTransparent})
       {
         if (mi)
           mesh->ReplaceInstance(mi, fallback->getDefaultInstance());
@@ -73,9 +73,12 @@ void FilamentMaterial::Destroy()
       engine->destroy(this->lit);
     if (this->unlit)
       engine->destroy(this->unlit);
+    if (this->unlitTransparent)
+      engine->destroy(this->unlitTransparent);
   }
   this->lit = nullptr;
   this->unlit = nullptr;
+  this->unlitTransparent = nullptr;
 }
 
 //////////////////////////////////////////////////
@@ -119,9 +122,20 @@ void FilamentMaterial::ClearTexture()
 }
 
 //////////////////////////////////////////////////
+double FilamentMaterial::Opacity() const
+{
+  return (1.0 - this->Transparency()) * this->Diffuse().A();
+}
+
+//////////////////////////////////////////////////
 filament::MaterialInstance *FilamentMaterial::Instance() const
 {
-  return this->LightingEnabled() ? this->lit : this->unlit;
+  if (this->LightingEnabled())
+    return this->lit;
+  // like Ogre2Material::UpdateTransparency
+  const bool blended = this->Opacity() < 1.0;
+  return blended && this->unlitTransparent ? this->unlitTransparent :
+      this->unlit;
 }
 
 //////////////////////////////////////////////////
@@ -131,13 +145,15 @@ void FilamentMaterial::Init()
   auto *engine = FilamentRenderEngine::Instance();
   filament::Material *litMat = engine->Material("gz_lit");
   filament::Material *unlitMat = engine->Material("gz_unlit");
-  if (!litMat || !unlitMat)
+  filament::Material *transparentMat = engine->Material("gz_unlit_transparent");
+  if (!litMat || !unlitMat || !transparentMat)
   {
     gzerr << "Filament base materials not available" << std::endl;
     return;
   }
   this->lit = litMat->createInstance();
   this->unlit = unlitMat->createInstance();
+  this->unlitTransparent = transparentMat->createInstance();
   this->Reset();
   this->PreRender();
 }
@@ -146,7 +162,7 @@ void FilamentMaterial::Init()
 void FilamentMaterial::PreRender()
 {
   BaseMaterial::PreRender();
-  if (!this->lit || !this->unlit)
+  if (!this->lit || !this->unlit || !this->unlitTransparent)
     return;
 
   if (this->HasTexture() && this->Texture() != this->loadedTexture)
@@ -186,7 +202,7 @@ void FilamentMaterial::PreRender()
       static_cast<float>(this->Transparency()), s.R(), s.G(), s.B(),
       this->Roughness(), this->Metalness(),
       this->LightingEnabled() ? 1.0f : 0.0f, e.R(), e.G(), e.B(),
-      static_cast<float>(this->lightMapUvSet), 0.0f, 0.0f};
+      static_cast<float>(this->lightMapUvSet), d.A(), 0.0f};
   if (this->pushed && key == this->pushedKey &&
       this->texture == this->pushedTexture && mapTextures == this->pushedMaps)
   {
@@ -194,6 +210,7 @@ void FilamentMaterial::PreRender()
   }
   this->Update(this->lit);
   this->Update(this->unlit);
+  this->Update(this->unlitTransparent);
   this->pushed = true;
   this->pushedKey = key;
   this->pushedTexture = this->texture;
@@ -444,7 +461,7 @@ filament::Texture *FilamentMaterial::FilamentTexture() const
 void FilamentMaterial::Update(filament::MaterialInstance *_instance)
 {
   math::Color diffuse = this->Diffuse();
-  diffuse.A(static_cast<float>(1.0 - this->Transparency()));
+  diffuse.A(static_cast<float>(this->Opacity()));
   _instance->setParameter("baseColor", FilamentConversions::ToFloat4(diffuse));
   _instance->setParameter("hasTexture", this->texture ? 1 : 0);
   filament::TextureSampler sampler(
