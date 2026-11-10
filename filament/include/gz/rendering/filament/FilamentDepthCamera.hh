@@ -54,6 +54,8 @@ namespace gz
 
       public: virtual void CreateDepthTexture() override;
 
+      public: virtual void PreRender() override;
+
       public: virtual void Render() override;
 
       public: virtual void PostRender() override;
@@ -85,6 +87,12 @@ namespace gz
 
       /// \brief This frame's depth target already holds the clamped depth
       protected: bool gpuClamped{false};
+
+      /// \brief gz_depth_cloud, GZ_FILAMENT_GPU_DEPTH=1 on OpenGL only
+      protected: filament::MaterialInstance *cloudInstance{nullptr};
+
+      /// \brief This frame's depth target (RGBA32F) holds the point cloud
+      protected: bool gpuCloud{false};
 
       /// \brief Color pass target, created on demand for the point cloud
       protected: FilamentRenderTexturePtr colorTexture;

@@ -1,0 +1,51 @@
+// gz_depth_clamp producing the colored point cloud as well (OpenGL only,
+// GZ_FILAMENT_GPU_DEPTH=1, see FilamentDepthCamera.cc), into an RGBA32F
+// target: xyz in the camera frame (X forward, Y left, Z up), clamped like
+// ogre2 (+inf beyond far, -inf nearer than near), and the color pass's
+// sRGB bytes packed into w as R << 24 | G << 16 | B << 8 | 255 (background
+// color, bg, for clamped points). All highp, no shifts.
+material {
+    name : gz_depth_cloud,
+    shadingModel : unlit,
+    blending : opaque,
+    depthWrite : true,
+    parameters : [
+        { type : float, name : nearT, precision : high },
+        { type : float, name : farSq, precision : high },
+        { type : float, name : inf, precision : high },
+        { type : float4, name : ray, precision : high },
+        { type : float, name : bg, precision : high },
+        { type : sampler2d, name : colorIn, precision : high }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec4 viewPos = getViewFromWorldMatrix() * vec4(getWorldPosition(), 1.0);
+        highp float d = -viewPos.z;
+        highp float inf = materialParams.inf;
+        // the CPU path's -(u + 0.5 - cx) / fx * d, -(v + 0.5 - cy) / fy * d:
+        // ray holds (cx, h - cy, fx, fy), gl_FragCoord.y = h - (v + 0.5)
+        highp vec4 ray = materialParams.ray;
+        highp float p1 = -(gl_FragCoord.x - ray.x) / ray.z * d;
+        highp float p2 = (gl_FragCoord.y - ray.y) / ray.w * d;
+        highp vec4 o;
+        if (d * d + p1 * p1 + p2 * p2 > materialParams.farSq) {
+            o = vec4(inf, inf, inf, materialParams.bg);
+        } else if (d < materialParams.nearT) {
+            o = vec4(-inf, -inf, -inf, materialParams.bg);
+        } else {
+            // the sampler decodes the sRGB target: encode back to its bytes
+            highp vec3 c = texelFetch(materialParams_colorIn,
+                ivec2(gl_FragCoord.xy), 0).rgb;
+            highp vec3 s = mix(c * 12.92,
+                1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055,
+                step(vec3(0.0031308), c));
+            highp uvec3 b = uvec3(clamp(floor(s * 255.0 + 0.5), 0.0, 255.0));
+            highp uint packed = b.r * 16777216u + b.g * 65536u + b.b * 256u + 255u;
+            o = vec4(d, p1, p2, uintBitsToFloat(packed));
+        }
+        material.baseColor = o;
+    }
+}

@@ -33,6 +33,7 @@
 #include <filament/Material.h>
 #include <filament/MaterialInstance.h>
 #include <filament/Renderer.h>
+#include <filament/TextureSampler.h>
 #include <filament/View.h>
 
 #include <gz/common/Console.hh>
@@ -87,6 +88,9 @@ void FilamentDepthCamera::Destroy()
   if (engine && this->clampInstance)
     engine->destroy(this->clampInstance);
   this->clampInstance = nullptr;
+  if (engine && this->cloudInstance)
+    engine->destroy(this->cloudInstance);
+  this->cloudInstance = nullptr;
   if (this->colorTexture)
   {
     this->colorTexture->Destroy();
@@ -171,6 +175,67 @@ namespace
   }
 }
 
+namespace
+{
+  /// \brief ogre2's color of clamped points: the gamma-encoded background
+  /// as R << 24 | G << 16 | B << 8 | 255
+  uint32_t BgPacked(const math::Color &_bg)
+  {
+    return
+      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(_bg.R()) * 255.0)) << 24u) |
+      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(_bg.G()) * 255.0)) << 16u) |
+      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(_bg.B()) * 255.0)) << 8u) |
+      255u;
+  }
+}
+
+//////////////////////////////////////////////////
+void FilamentDepthCamera::PreRender()
+{
+  if (!this->depthInstance)
+    this->CreateDepthTexture();
+  // opt-in: clamp (and build the point cloud, OpenGL) in the shader so
+  // PostRender only copies; particles keep the CPU path. float32 math, so
+  // the cloud's y, z and pixels right at the far range may differ from the
+  // CPU path's doubles by an ulp
+  static const bool gpuDepthEnv = []
+  {
+    const char *e = std::getenv("GZ_FILAMENT_GPU_DEPTH");
+    return e && std::string(e) == "1";
+  }();
+  filament_particles::Noise noise;
+  const bool gpu = gpuDepthEnv &&
+      !filament_particles::FindNoise(*this->scene, noise);
+  const bool cloud = this->newRgbPointCloud.ConnectionCount() > 0u;
+  this->gpuClamped = gpu && !cloud;
+  // ponytail: Vulkan reads RGBA32F back texel by texel and has no packed
+  // variant of the cloud target, so its clouds stay on the CPU
+  this->gpuCloud = gpu && cloud && !PackedDepth();
+  filament::MaterialInstance *&mi = this->gpuCloud ? this->cloudInstance :
+      this->clampInstance;
+  if ((this->gpuClamped || this->gpuCloud) && !mi)
+  {
+    filament::Material *mat = FilamentRenderEngine::Instance()->Material(
+        this->gpuCloud ? "gz_depth_cloud" :
+        PackedDepth() ? "gz_depth_clamp_packed" : "gz_depth_clamp");
+    if (mat)
+      mi = mat->createInstance();
+  }
+  if (!mi)
+    this->gpuClamped = this->gpuCloud = false;
+  // the target format before PreRender (re)builds it
+  if (!PackedDepth())
+  {
+    const PixelFormat fmt = this->gpuCloud ? PF_FLOAT32_RGBA : PF_FLOAT32_R;
+    if (this->renderTexture->Format() != fmt)
+    {
+      this->renderTexture->SetFormat(fmt);
+      this->renderTexture->PreRender();
+    }
+  }
+  FilamentCamera::PreRender();
+}
+
 //////////////////////////////////////////////////
 void FilamentDepthCamera::Render()
 {
@@ -182,6 +247,47 @@ void FilamentDepthCamera::Render()
 
   this->view->setVisibleLayers(0xff,
       FilamentConversions::MaskToLayers(this->VisibilityMask()));
+
+  filament::MaterialInstance *mi = this->gpuCloud ? this->cloudInstance :
+      this->clampInstance;
+  // parameters before the color pass begins the frame: the engine commits
+  // material instances when a frame begins, later changes land a frame late
+  const float inf = std::numeric_limits<float>::infinity();
+  const uint32_t bgBits = BgPacked(this->scene->BackgroundColor());
+  float bgF;
+  std::memcpy(&bgF, &bgBits, sizeof(bgF));
+  if (this->gpuClamped || this->gpuCloud)
+  {
+    // the least float >= near + tol, as in PostRender
+    const double nearT = this->NearClipPlane() + 1e-6;
+    float nearFl = static_cast<float>(nearT);
+    if (static_cast<double>(nearFl) < nearT)
+      nearFl = std::nextafter(nearFl, inf);
+    mi->setParameter("nearT", nearFl);
+    mi->setParameter("farSq",
+        static_cast<float>(FarRangeSq(this->FarClipPlane() - 1e-6)));
+    mi->setParameter("inf", inf);
+    // pinhole as in PostRender
+    const double w = this->ImageWidth();
+    const double h = this->ImageHeight();
+    double fx = (w * 0.5) / std::tan(this->HFOV().Radian() * 0.5);
+    double fy = fx;
+    double cx = w * 0.5;
+    double cy = h * 0.5;
+    if (this->customProjection)
+    {
+      const math::Matrix4d proj = FilamentCamera::ProjectionMatrix();
+      fx = proj(0, 0) * w * 0.5;
+      fy = proj(1, 1) * h * 0.5;
+      cx = w * 0.5 * (1.0 - proj(0, 2));
+      cy = h * 0.5 * (1.0 + proj(1, 2));
+    }
+    mi->setParameter("ray", this->gpuCloud ?
+        filament::math::float4(cx, h - cy, fx, fy) :
+        filament::math::float4(w / fx, cx / fx, h / fy, cy / fy));
+    if (this->gpuCloud)
+      mi->setParameter("bg", bgF);
+  }
 
   // Color pass, only needed for the colored point cloud
   if (this->newRgbPointCloud.ConnectionCount() > 0u)
@@ -200,6 +306,11 @@ void FilamentDepthCamera::Render()
       this->colorTexture->SetHeight(this->ImageHeight());
     }
     this->colorTexture->PreRender();
+    if (this->gpuCloud)
+    {
+      mi->setParameter("colorIn", this->colorTexture->ColorTexture(),
+          filament::TextureSampler());
+    }
     this->colorTexture->SetClearColor(
         FilamentConversions::ToFloat4(this->scene->BackgroundColor()));
     // the color and the depth pass share one frame (one command buffer,
@@ -216,64 +327,16 @@ void FilamentDepthCamera::Render()
   // far".
   this->view->setVisibleLayers(0xff,
       FilamentConversions::ToSensorLayers(this->VisibilityMask()));
-  const float inf = std::numeric_limits<float>::infinity();
   // packed: the bytes of +inf (0x7f800000), least significant first
   if (PackedDepth())
     this->renderTexture->SetClearColor({0.0f, 0.0f, 128.0f / 255.0f, 127.0f / 255.0f});
+  else if (this->gpuCloud)
+    this->renderTexture->SetClearColor({inf, inf, inf, bgF});
   else
     this->renderTexture->SetClearColor({inf, inf, inf, 1.0f});
-  // opt-in: clamp in the shader so PostRender only copies (depth only, no
-  // particles; float32 range test, so pixels right at the far range may
-  // differ from the CPU path's double test)
-  static const bool gpuDepthEnv = []
-  {
-    const char *e = std::getenv("GZ_FILAMENT_GPU_DEPTH");
-    return e && std::string(e) == "1";
-  }();
-  filament_particles::Noise noise;
-  this->gpuClamped = gpuDepthEnv &&
-      this->newRgbPointCloud.ConnectionCount() == 0u &&
-      !filament_particles::FindNoise(*this->scene, noise);
-  if (this->gpuClamped && !this->clampInstance)
-  {
-    filament::Material *mat = FilamentRenderEngine::Instance()->Material(
-        PackedDepth() ? "gz_depth_clamp_packed" : "gz_depth_clamp");
-    if (mat)
-      this->clampInstance = mat->createInstance();
-  }
-  this->gpuClamped = this->gpuClamped && this->clampInstance;
-  if (this->gpuClamped)
-  {
-    // the least float >= near + tol, as in PostRender
-    const double nearT = this->NearClipPlane() + 1e-6;
-    float nearFl = static_cast<float>(nearT);
-    if (static_cast<double>(nearFl) < nearT)
-      nearFl = std::nextafter(nearFl, inf);
-    this->clampInstance->setParameter("nearT", nearFl);
-    this->clampInstance->setParameter("farSq",
-        static_cast<float>(FarRangeSq(this->FarClipPlane() - 1e-6)));
-    this->clampInstance->setParameter("inf", inf);
-    // pinhole as in PostRender
-    const double w = this->ImageWidth();
-    const double h = this->ImageHeight();
-    double fx = (w * 0.5) / std::tan(this->HFOV().Radian() * 0.5);
-    double fy = fx;
-    double cx = w * 0.5;
-    double cy = h * 0.5;
-    if (this->customProjection)
-    {
-      const math::Matrix4d proj = FilamentCamera::ProjectionMatrix();
-      fx = proj(0, 0) * w * 0.5;
-      fy = proj(1, 1) * h * 0.5;
-      cx = w * 0.5 * (1.0 - proj(0, 2));
-      cy = h * 0.5 * (1.0 + proj(1, 2));
-    }
-    this->clampInstance->setParameter("ray", filament::math::float4(
-        w / fx, cx / fx, h / fy, cy / fy));
-  }
   const auto &meshes = this->scene->Meshes();
   for (FilamentMesh *m : meshes)
-    m->OverrideMaterial(this->gpuClamped ? this->clampInstance :
+    m->OverrideMaterial((this->gpuClamped || this->gpuCloud) ? mi :
         this->depthInstance);
   this->renderTexture->Render(this->view);
   FilamentRenderEngine::Instance()->EndFrame();
@@ -293,17 +356,21 @@ void FilamentDepthCamera::PostRender()
 
   // queue both readbacks, wait once (rows come back top row first, the
   // gz image layout)
-  const bool wantCloud = !this->gpuClamped &&
+  const bool wantCloud = !this->gpuClamped && !this->gpuCloud &&
       this->newRgbPointCloud.ConnectionCount() > 0u;
   auto *renderer = FilamentRenderEngine::Instance()->Renderer();
   this->depthRaw.resize(len);
+  if (this->gpuCloud)
+    this->pointCloud.resize(len * 4u);
   const bool packedDepth = PackedDepth();
   renderer->readPixels(this->renderTexture->Native(), 0, 0, width, height,
-      filament::backend::PixelBufferDescriptor(this->gpuClamped ?
-      this->depthImage.data() : this->depthRaw.data(),
-      len * sizeof(float),
-      packedDepth ? filament::backend::PixelDataFormat::RGBA :
-                    filament::backend::PixelDataFormat::R,
+      filament::backend::PixelBufferDescriptor(
+      this->gpuCloud ? this->pointCloud.data() :
+      this->gpuClamped ? this->depthImage.data() : this->depthRaw.data(),
+      len * sizeof(float) * (this->gpuCloud ? 4u : 1u),
+      (packedDepth || this->gpuCloud) ?
+          filament::backend::PixelDataFormat::RGBA :
+          filament::backend::PixelDataFormat::R,
       packedDepth ? filament::backend::PixelDataType::UBYTE :
                     filament::backend::PixelDataType::FLOAT));
   const unsigned char *rgba = nullptr;
@@ -317,6 +384,18 @@ void FilamentDepthCamera::PostRender()
     rgba = this->colorRaw.data();
   }
   FilamentRenderEngine::Instance()->FilamentEngine()->flushAndWait();
+  if (this->gpuCloud)
+  {
+    for (size_t i = 0; i < len; ++i)
+      this->depthImage[i] = this->pointCloud[i * 4u];
+    FilamentGaussianNoisePass::ApplyDepth(*this, this->depthImage.data(),
+        this->pointCloud.data());
+    this->newDepthFrame(this->depthImage.data(), width, height, 1u,
+        "FLOAT32");
+    this->newRgbPointCloud(this->pointCloud.data(), width, height, 4u,
+        "PF_FLOAT32_RGBA");
+    return;
+  }
   if (this->gpuClamped)
   {
     FilamentGaussianNoisePass::ApplyDepth(*this, this->depthImage.data(),
@@ -352,12 +431,7 @@ void FilamentDepthCamera::PostRender()
   }
   // ogre2 also writes the background color for clamped points; it
   // gamma-encodes it, the color pass target here is sRGB as well
-  const math::Color bg = this->scene->BackgroundColor();
-  const uint32_t bgPacked =
-      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.R()) * 255.0)) << 24u) |
-      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.G()) * 255.0)) << 16u) |
-      (static_cast<uint32_t>(std::round(FilamentConversions::LinearToSrgb(bg.B()) * 255.0)) << 8u) |
-      255u;
+  const uint32_t bgPacked = BgPacked(this->scene->BackgroundColor());
   // particles: half resolution depth of the nearest particle, like ogre2's
   // particle pass, sampled nearest
   namespace fp = filament_particles;
